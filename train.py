@@ -10,6 +10,8 @@ import numpy as np
 from model import GPTConfig, GPT
 from loss import CrossEntropyK
 
+K = 2
+
 def load_tokens(filename):
     npt = np.load(filename)
     npt = npt.astype(np.int32)
@@ -119,8 +121,8 @@ if master_process:
     print(f"total desired batch size: {total_batch_size}")
     print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-train_loader = DataLoaderLite(B=B, T=T, K=1, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
-val_loader = DataLoaderLite(B=B, T=T, K=1, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
+train_loader = DataLoaderLite(B=B, T=T, K=K, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
+val_loader = DataLoaderLite(B=B, T=T, K=K, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
 
 torch.set_float32_matmul_precision('high')
 
@@ -150,13 +152,17 @@ def get_lr(it):
     return min_lr + coeff * (max_lr - min_lr)
 
 optimizer = raw_model.configure_optimizers(weight_decay=0.1, betas=(0.9, 0.95), learning_rate=6e-4, device_type=device_type)
-loss_fn = CrossEntropyK(k=1)
+loss_fn = CrossEntropyK(k=K)
 
 log_dir = "log"
+per_token_file = f'per_token_loss_{K}.txt'
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"log.txt")
-with open(log_file, "w") as f: 
+per_token_file = os.path.join(log_dir, per_token_file)
+with open(log_file, "w") as f, open(per_token_file, 'w') as f2: 
     pass
+
+
 
 for step in range(max_steps):
     t0 = time.time()
@@ -173,7 +179,7 @@ for step in range(max_steps):
                 x, y = x.to(device), y.to(device)
                 with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits = model(x)
-                    loss, _ = loss_fn(logits, y)
+                    loss, losses = loss_fn(logits, y)
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
         if ddp:
@@ -182,6 +188,10 @@ for step in range(max_steps):
             print(f"validation loss: {val_loss_accum.item():.4f}")
             with open(log_file, "a") as f:
                 f.write(f"{step} val {val_loss_accum.item():.4f}\n")
+            
+            with open(per_token_file, 'a') as f:
+                f.write(f"{step} val {' | '.join([f'{i+1}:{v}' for i, v in losses.items()])}\n")
+
             if step > 0 and (step % 5000 == 0 or last_step):
                 # optionally write model checkpoints
                 checkpoint_path = os.path.join(log_dir, f"cpt.pt")
@@ -228,7 +238,7 @@ for step in range(max_steps):
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits = model(x)
-            loss, _ = loss_fn(logits, y)
+            loss, losses = loss_fn(logits, y)
 
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
@@ -251,6 +261,9 @@ for step in range(max_steps):
         print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
         with open(log_file, "a") as f:
             f.write(f"{step} train {loss_accum.item():.6f}\n")
+        
+        with open(per_token_file, 'a') as f:
+            f.write(f"{step} train {' | '.join([f'{i+1}:{v}' for i, v in losses.items()])}\n")
 
 if ddp:
     destroy_process_group()
