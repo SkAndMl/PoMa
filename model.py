@@ -98,13 +98,13 @@ class Block(nn.Module):
 class GPTConfig:
     block_size: int = 1024 # max sequence length
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
-    n_layer: int = 12 # number of layers
-    n_head: int = 12 # number of heads
-    n_embd: int = 768 # embedding dimension
+    n_layer: int = 24 # number of layers
+    n_head: int = 16 # number of heads
+    n_embd: int = 1024 # embedding dimension
     dropout: float = 0.0
     bias: bool = False
     k: int = 3
-    r: int = 192
+    r: int = 256
 
 
 class LMHead(nn.Module):
