@@ -7,10 +7,10 @@ import torch.nn as nn
 from torch.nn import functional as F
 import tiktoken
 import numpy as np
-from model import GPTConfig, GPT
+from model import GPTConfig, GPTk
 from loss import CrossEntropyK
 
-K = 2
+K = 3
 
 def load_tokens(filename):
     npt = np.load(filename)
@@ -127,7 +127,7 @@ val_loader = DataLoaderLite(B=B, T=T, K=K, process_rank=ddp_rank, num_processes=
 torch.set_float32_matmul_precision('high')
 
 # create model
-model = GPT(GPTConfig(vocab_size=50304))
+model = GPTk(GPTConfig(vocab_size=50304, k=K))
 model.to(device)
 use_compile = False
 if use_compile:
@@ -190,7 +190,7 @@ for step in range(max_steps):
                 f.write(f"{step} val {val_loss_accum.item():.4f}\n")
             
             with open(per_token_file, 'a') as f:
-                f.write(f"{step} val {' | '.join([f'{i+1}:{v}' for i, v in losses.items()])}\n")
+                f.write(f"{step:5d} val {' | '.join([f'{i+1}:{v:.5f}' for i, v in losses.items()])}\n")
 
             if step > 0 and (step % 5000 == 0 or last_step):
                 # optionally write model checkpoints
@@ -217,7 +217,7 @@ for step in range(max_steps):
             with torch.no_grad():
                 with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits = model(xgen) # (B, T, vocab_size)
-                logits = logits[:, -1, :] # (B, vocab_size)
+                logits = logits[0][:, -1, :] # (B, vocab_size)
                 probs = F.softmax(logits, dim=-1)
                 topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
                 ix = torch.multinomial(topk_probs, 1, generator=sample_rng) # (B, 1)
@@ -263,7 +263,7 @@ for step in range(max_steps):
             f.write(f"{step} train {loss_accum.item():.6f}\n")
         
         with open(per_token_file, 'a') as f:
-            f.write(f"{step} train {' | '.join([f'{i+1}:{v}' for i, v in losses.items()])}\n")
+            f.write(f"{step:5d} train {' | '.join([f'{i+1}:{v:.5f}' for i, v in losses.items()])}\n")
 
 if ddp:
     destroy_process_group()

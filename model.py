@@ -94,24 +94,6 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
     
-    
-class ConvBlock(nn.Module):
-
-    def __init__(self, config):
-        super().__init__()
-        self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_blocks_before_conv)])
-        self.conv_layer = nn.Conv1d(config.n_embd, config.n_embd//2, kernel_size=1)
-        
-    
-    def forward(self, x):
-        for block in self.blocks:
-            x = block(x)
-
-        x = x.transpose(1, 2) # b, n_embd, t
-        x = self.conv_layer(x).transpose(1, 2) # b, t, n_embd//2
-        return x
-
-
 @dataclass
 class GPTConfig:
     block_size: int = 1024 # max sequence length
@@ -121,10 +103,24 @@ class GPTConfig:
     n_embd: int = 768 # embedding dimension
     dropout: float = 0.0
     bias: bool = False
-    n_parallel_paths: int = 4
+    k: int = 3
+    r: int = 64
 
 
-class GPT(nn.Module):
+class LMHead(nn.Module):
+
+    def __init__(self, vocab_size, r): 
+        super().__init__()
+        self.up = nn.Linear(r, vocab_size)
+        self.down = nn.Linear(vocab_size, r)
+
+    def forward(self, x: torch.Tensor):
+        logits = self.up(x)
+        output = self.down(F.relu(logits))
+        return logits, output
+
+
+class GPTk(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.vocab_size is not None
@@ -137,7 +133,9 @@ class GPT(nn.Module):
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.latent_layer = nn.Linear(config.n_embd, config.r)
+        self.lm_heads = nn.ModuleList([LMHead(self.config.vocab_size, self.config.r)
+                                       for _ in range(self.config.k)])
 
         self.apply(self._init_weights)
 
@@ -145,7 +143,7 @@ class GPT(nn.Module):
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
-        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))            
 
     def get_num_params(self, non_embedding=True):
         n_params = sum(p.numel() for p in self.parameters())
@@ -161,13 +159,6 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def crop_block_size(self, block_size):
-        assert block_size <= self.config.block_size
-        self.config.block_size = block_size
-        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
-        for block in self.transformer.h:
-            if hasattr(block.attn, 'bias'):
-                block.attn.bias = block.attn.bias[:,:,:block_size,:block_size]
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
         param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
@@ -189,20 +180,6 @@ class GPT(nn.Module):
 
         return optimizer
         
-    @torch.inference_mode()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
-        for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] / temperature
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
-            probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
-
-        return idx
         
     def forward(self, idx):
         device = idx.device
@@ -215,6 +192,15 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
             x = block(x)
+        
         x = self.transformer.ln_f(x)
-        logits = self.lm_head(x)
+        latent_vector = self.latent_layer(x)
+        logits = {} 
+        lm_head_op = None       
+        for k in range(len(self.lm_heads)):
+            if k==0:
+                logits[k], lm_head_op = self.lm_heads[k](latent_vector)
+            else:
+                logits[k], lm_head_op = self.lm_heads[k](latent_vector + lm_head_op)
+
         return logits
