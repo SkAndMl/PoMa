@@ -104,7 +104,7 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = False
     k: int = 3
-    r: int = 64
+    r: int = 192
 
 
 class LMHead(nn.Module):
