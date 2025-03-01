@@ -18,10 +18,9 @@ class CrossEntropyK(nn.Module):
         targets: torch.Tensor
     ) -> torch.Tensor:
         bs, n, vocab_size = logits[0].shape
-        assert n + self.k -1 == targets.size(-1)
+        assert n + self.k - 1 == targets.size(-1)
 
-        total_loss = torch.zeros(size=(bs, n), dtype=torch.float32).to(logits[0].device)
-        
+        total_loss = torch.zeros(size=(bs, n), dtype=torch.float32).to(logits[0].device)        
         losses = defaultdict(float)
         for i in range(self.k):
             targets_i = targets[:, i:i+n]

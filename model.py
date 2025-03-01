@@ -156,7 +156,7 @@ class GPTk(nn.Module):
 
         tok_emb = self.transformer.wte(idx) 
         pos_emb = self.transformer.wpe(pos) 
-        x = self.transformer.drop(tok_emb + pos_emb)
+        x = tok_emb + pos_emb
         for block in self.transformer.h:
             x = block(x)
         
@@ -187,7 +187,7 @@ class GPTk(nn.Module):
         config_args['vocab_size'] = 50257
         config_args['block_size'] = 1024
 
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
+        model_hf = GPT2LMHeadModel.from_pretrained(f"./{model_type}")
         model_hf.eval()
 
         for param in model_hf.parameters():
