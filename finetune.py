@@ -11,11 +11,13 @@ model_name = "gpt2-medium"
 tokenizer = tiktoken.get_encoding('gpt2')
 log_dir = f'finetuning_{model_name}'
 log_file = os.path.join(log_dir, 'finetuning.txt')
+per_token_file = os.path.join(log_dir, 'per_token_loss.txt')
 
 if not os.path.exists(log_dir):
     os.mkdir(log_dir)
 
 with open(log_file, 'w') as f: pass 
+with open(per_token_file, 'w') as f: pass
 
 
 class ReasoningDataset:
@@ -206,6 +208,9 @@ for global_step in range(max_steps):
         with open(log_file, 'a') as f: f.write(to_log+'\n')
         print(to_log)
 
+        per_token_log = f'val | ' + f' | '.join([f'{i+1}:{v:.5f}' for i,v in per_token_loss_dict.items()])
+        with open(per_token_file, 'a') as f: f.write(per_token_log+'\n')
+
         if global_step==max_steps-1:
             checkpoint_path = os.path.join(log_dir, f"cpt.pt")
             checkpoint = {
@@ -245,3 +250,6 @@ for global_step in range(max_steps):
     to_log = f'train | step: {global_step:5d} | train_loss: {loss_accum.item():.5f} | lr: {lr:.4e} | norm: {norm:.4f}'
     with open(log_file, 'a') as f: f.write(to_log+'\n')
     print(to_log)
+
+    per_token_log = f'train | ' + f' | '.join([f'{i+1}:{v:.5f}' for i,v in per_token_loss_dict.items()])
+    with open(per_token_file, 'a') as f: f.write(per_token_log+'\n')
