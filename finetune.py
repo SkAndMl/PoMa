@@ -6,6 +6,7 @@ from typing import Tuple, Optional, List
 import tiktoken
 import math
 import json
+import random
 
 model_name = "gpt2-medium"
 tokenizer = tiktoken.get_encoding('gpt2')
@@ -41,62 +42,60 @@ class ReasoningDataset:
         self.ignore_index = ignore_index
         self.max_length = max_length
         self.device = device
-        data = []
+        self.data = []
         with open(data_path, 'r') as f:
             for line in f:
-                data.append(json.loads(line))
+                self.data.append(json.loads(line))
         
-        self.encoding = []
-        for example in data:
-            self.encoding.append(
-                tokenizer.encode(self.format(example))
-            )
+        self.inputs, self.targets = [], []
+        for example in self.data:
+            self.inputs.append(tokenizer.encode(self.format_input(example)))
+            self.targets.append(tokenizer.encode(self.format_output(example)))
         
         self.current_pos = 0
-    
-    def __getitem__(self, idx): return self.encoding[idx]
 
-    def __len__(self): return len(self.encoding)
-    
-    def format(self, example):
+
+    def format_input(self, example) -> str:
         instruction_text = (
-            f"For the given question, think and generate an answer." 
+            f"For the given question, think and generate an answer"
         )
-
         input_text = (
-            f"\n\n### Question: {example['question']}"
+            f"\n\n### Question\n{example['question']}\nOptions: {example['options']}"
         )
+        return instruction_text + input_text
+    
+    def format_output(self, example) -> str:
 
         response_text = (
-            f"\n\n### Answer:\n<thinking>{example['rationale']}</thinking>\n<answer>{self._get_answer(example)}</answer>"
+            f"\n\n### Rationale\n{example['rationale']}\n\n### Correct answer\n{example['correct']}"
         )
+        return response_text
 
-        return instruction_text + input_text + response_text
-
-    def _get_answer(self, example):
-        options = example['options']
-        correct_answer = options[ord(example['correct'])-65].split(")")[-1]
-        return correct_answer
 
     def get_batch(self):
-        if self.current_pos+self.batch_size>=len(self.encoding):
+        if self.current_pos+self.batch_size>=len(self.inputs):
             self.current_pos = 0
         
-        inputs, targets = self.collate_fn(self.encoding[self.current_pos:self.current_pos+self.batch_size])
+        inputs, targets = self.collate_fn(
+            self.inputs[self.current_pos:self.current_pos+self.batch_size],
+            self.targets[self.current_pos:self.current_pos+self.batch_size]
+        )
         self.current_pos += self.batch_size
         return inputs, targets
 
 
     def collate_fn(
         self,
-        batch: List[int]
+        instructions: List[int],
+        responses: List[int]
     ) -> Tuple[torch.Tensor]:
         
+        batch = [inp+tgt for inp, tgt in zip(instructions, responses)]
         batch_max_length = max(len(item)+1 for item in batch)
         inputs_lst, targets_lst = [], []
 
-        for item in batch:
-            new_item = item.copy()
+        for i in range(len(batch)):
+            new_item = batch[i].copy()
             new_item += [self.pad_token_id]
 
             padded = (
@@ -104,6 +103,7 @@ class ReasoningDataset:
             )
             inputs = torch.tensor(padded[:-self.k])
             targets = torch.tensor(padded[1:])
+            targets[:len(instructions[i])-1] = self.ignore_index
 
             mask = targets == self.pad_token_id
             indices = torch.nonzero(mask).squeeze()
@@ -126,15 +126,15 @@ class ReasoningDataset:
 
 batch_size = 32
 grad_accum_steps = 8
-freeze_steps = 200
-warmup_steps = 100
-eval_steps = 200
+freeze_steps = 1500
+warmup_steps = 2000
+eval_steps = 250
 eval_loss_steps = 30
-max_steps = 1000
-max_length = 512
+max_steps = 24360
+max_length = 1024
 min_lr, max_lr = 6e-5, 6e-4
 device = "cuda" if torch.cuda.is_available() else "cpu"
-k, r = 3, 64
+k, r = 3, 256
 grad_norm_clip = 1.0
 
 
@@ -189,6 +189,32 @@ optimizer = torch.optim.AdamW([
 
 loss_fn = CrossEntropyK(k=k)
 
+@torch.inference_mode()
+def evaluate(model: GPTk):
+    model.eval()
+    random_idxs = random.sample(
+        list(range(len(test_ds))),
+        k=3
+    )
+
+    for idx in random_idxs:
+        example = test_ds.data[idx]
+        input_text = test_ds.format_input(example)
+
+        input_tokens = tokenizer.encode(input_text)
+        input_tokens = torch.tensor([input_tokens]).to(device)
+
+        output = model.generate(
+            tokens=input_tokens
+        )
+
+        print(input_text)
+        print(tokenizer.decode(output))
+        print("="*100)
+
+    model.train()
+
+
 for global_step in range(max_steps):
 
     if (global_step+1)%eval_steps==0 or global_step==max_steps-1:
@@ -221,6 +247,8 @@ for global_step in range(max_steps):
             }
             torch.save(checkpoint, checkpoint_path)
         
+        evaluate(model)
+
         model.train()
 
 

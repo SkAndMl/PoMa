@@ -223,3 +223,28 @@ class GPTk(nn.Module):
 
         print(f"Modified {model_type} model loaded into GPTk.")
         return model
+
+    
+    def generate(
+        self,
+        tokens: torch.Tensor,
+        max_new_tokens: int = 512
+    ) -> None:
+        
+        input_len = tokens.shape[0]
+
+        for _ in range(max_new_tokens):
+            logits = self(tokens)
+            next_tokens, next_token_probs = [], []
+            for i in range(self.config.k):
+                next_tokens.append(torch.argmax(logits[i][:, -1, :], dim=-1).squeeze().item())
+                max_val, _ = torch.max(F.softmax(logits[i], dim=-1), dim=-1)
+                next_token_probs.append(max_val[0][0].item())
+            
+            tokens = torch.cat(
+                [tokens, torch.tensor([[next_tokens[0]]], device=tokens.device)], 
+                dim=-1
+            ).to(tokens.device)
+            if next_tokens[0]==50256: break
+        
+        return tokens[0].tolist()[input_len:]
