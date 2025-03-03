@@ -12,7 +12,10 @@ import random
 # and loading pertinent tokenizer
 model_name = "gpt2-medium"
 # Loading tokenizer
+<<<<<<< HEAD
 tokenizer = tiktoken.get_encoding('gpt2')
+=======
+>>>>>>> ce6aefc5ce6a5c338007c44b27fcb722c953ee73
 log_dir = f'finetuning_{model_name}'
 log_file = os.path.join(log_dir, 'finetuning.txt')
 per_token_file = os.path.join(log_dir, 'per_token_loss.txt')
