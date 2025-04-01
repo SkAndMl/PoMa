@@ -1,0 +1,1 @@
+LLAMA_PATH = "/Users/sathyakrishnansuresh/.llama/checkpoints/Llama3.2-1B"
