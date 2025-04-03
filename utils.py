@@ -27,7 +27,10 @@ def load_model(ckpt_path: str, device: str, max_batch_size: int, max_seq_len: in
     """
     assert device in {"cpu", "cuda"}
     assert os.path.isdir(ckpt_path)
-    cp = torch.load(list(Path(ckpt_path).glob("*.pth"))[0], map_location=device)
+    cp = list(Path(ckpt_path).glob("*.pth"))
+    assert len(cp)>0, f"{ckpt_path} has no .pth files!"
+    wt = torch.load(cp[0], map_location=device)
+
     with open(Path(ckpt_path) / "params.json", "r") as f:
         params: dict = json.loads(f.read())
         params['max_batch_size'] = max_batch_size
@@ -37,5 +40,5 @@ def load_model(ckpt_path: str, device: str, max_batch_size: int, max_seq_len: in
     
     model_args = ModelArgs(**params)
     model = Transformer(model_args)
-    model.load_state_dict(cp)
+    model.load_state_dict(wt)
     return model.to(device)
