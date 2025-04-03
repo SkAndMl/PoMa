@@ -15,19 +15,18 @@ class TranslationDataset(Dataset):
         source_lang: str, 
         target_lang: str, 
         split: str,
-        tokenizer_path: str
+        tokenizer: Tokenizer
     ) -> None:
         """
         constructs
         """
         assert split in ["train", "validation", "test"], f"split must be train, validation or test"
-        assert os.path.exists(tokenizer_path), OSError(f"{tokenizer_path} does not exit")
         try:
             ds = load_dataset("wmt14", dataset_hf_id)
         except Exception as e:
             raise ValueError(f"{dataset_hf_id} is invalid")
         
-        self.tokenizer = Tokenizer(model_path=tokenizer_path)
+        self.tokenizer = tokenizer
         data = ds[split]
         self.tokens = []
         for instance in data:

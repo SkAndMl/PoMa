@@ -4,6 +4,7 @@ from model import Transformer, ModelArgs
 from pathlib import Path
 import json
 import os
+import logging
 
 @torch.inference_mode()
 def generate(model, max_tokens: int, prompt: str, tokenizer: Tokenizer, device: str) -> str:
@@ -42,3 +43,15 @@ def load_model(ckpt_path: str, device: str, max_batch_size: int, max_seq_len: in
     model = Transformer(model_args)
     model.load_state_dict(wt)
     return model.to(device)
+
+def create_logger():
+    logger = logging.getLogger("training")
+    logger.setLevel(logging.INFO)
+    file_handler = logging.FileHandler('training.log', mode='w')
+    console_handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    return logger
