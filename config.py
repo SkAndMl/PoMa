@@ -6,3 +6,4 @@ max_batch_size = 64
 epochs = 3
 lr = 3e-4
 wd = 1e-2
+k = 3

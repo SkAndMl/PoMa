@@ -3,7 +3,7 @@ adapted from https://github.com/meta-llama/llama3/blob/main/llama/model.py
 """
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -318,7 +318,7 @@ class GPTk(nn.Module):
         model.load_state_dict(wt)
         return model.to(device)
     
-    def forward(self, tokens: torch.Tensor, start_pos: int):
+    def forward(self, tokens: torch.Tensor, start_pos: int) -> Dict[int, torch.Tensor]:
         _bsz, seqlen = tokens.shape
         h: torch.Tensor = self.base_model.tok_embeddings(tokens)
         self.base_model.freqs_cis = self.base_model.freqs_cis.to(h.device)
