@@ -7,6 +7,9 @@ from typing import Optional, Tuple
 import torch
 import torch.nn.functional as F
 from torch import nn
+import os
+from pathlib import Path
+import json
 
 
 @dataclass
@@ -242,7 +245,6 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
-    @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
@@ -268,3 +270,74 @@ class Transformer(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
+
+class PosEmbeddingLayer(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super(PosEmbeddingLayer, self).__init__()
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.embedding = nn.Embedding(params.max_seq_len, params.dim)
+    
+    def forward(self, x, seq_len):
+        pos_embeddings = self.embedding(torch.arange(seq_len, device=x.device))
+        return self.norm(x + pos_embeddings)
+
+class GPTk(nn.Module):
+    """
+    pos-embedding variant of gpt-k
+    """
+    def __init__(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int, k: int) -> None:
+        super().__init__()
+        assert k>=2, "if not >=2 mtp makes no sense"
+        self.base_model = self._load_model(ckpt_path, device, max_batch_size, max_seq_len)
+        self.k = k
+        self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k-1))
+        # freeze base_model params
+        # might need to unfreeze the lm_head in the future depending on how the experiments go :)
+        for param in self.base_model.parameters():
+            param.requires_grad = False
+    
+    def _load_model(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int):
+        """
+        loads the weights into the model
+        """
+        assert device in {"cpu", "cuda"}
+        assert os.path.isdir(ckpt_path)
+        cp = list(Path(ckpt_path).glob("*.pth"))
+        assert len(cp)>0, f"{ckpt_path} has no .pth files!"
+        wt = torch.load(cp[0], map_location=device)
+
+        with open(Path(ckpt_path) / "params.json", "r") as f:
+            self.params = json.loads(f.read())
+            self.params['max_batch_size'] = max_batch_size
+            self.params['max_seq_len'] = max_seq_len
+            # remove extra params
+            self.params = {k:self.params[k] for k in ModelArgs.__match_args__}
+        
+        self.params = ModelArgs(**self.params)
+        model = Transformer(self.params)
+        model.load_state_dict(wt)
+        return model.to(device)
+    
+    def forward(self, tokens: torch.Tensor, start_pos: int):
+        _bsz, seqlen = tokens.shape
+        h: torch.Tensor = self.base_model.tok_embeddings(tokens)
+        self.base_model.freqs_cis = self.base_model.freqs_cis.to(h.device)
+        freqs_cis = self.base_model.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
+
+        for layer in self.base_model.layers:
+            h = layer(h, start_pos, freqs_cis, mask)
+
+        position_logits = {}
+        position_logits[0] = self.base_model.output(self.base_model.norm(h)).float()
+        for i, embedding_layer in enumerate(self.pos_embeddings):
+            modified_h = embedding_layer(h, seqlen) 
+            position_logits[i+1] = self.base_model.output(modified_h) # i+1 because pos_embeddings is of len k-1
+        return position_logits
