@@ -3,7 +3,7 @@ from datasets import load_dataset
 import os
 import torch
 from tokenizer import Tokenizer
-from typing import Tuple
+from typing import Tuple, List, Optional, Dict
 
 class TranslationDataset(Dataset):
     """
@@ -15,6 +15,7 @@ class TranslationDataset(Dataset):
         source_lang: str, 
         target_lang: str, 
         split: str,
+        few_shot_examples: Optional[List[Dict[str, str]]],
         tokenizer: Tokenizer
     ) -> None:
         """
@@ -26,19 +27,28 @@ class TranslationDataset(Dataset):
         except Exception as e:
             raise ValueError(f"{dataset_hf_id} is invalid")
         
+        self.few_shot_examples = few_shot_examples
         self.tokenizer = tokenizer
+        self.source_lang = source_lang
+        self.target_lang = target_lang
         data = ds[split]
         self.tokens = []
         for instance in data:
-            instance_toks = self.tokenizer.encode("Translate: ", bos=True, eos=False)
-            instance_toks.extend(
-                self.tokenizer.encode(f"{source_lang.capitalize()}: {instance['translation'][source_lang]} {target_lang.capitalize()}: ", bos=False, eos=False)
-            )
-            end_pos = len(instance_toks)
-            instance_toks.extend(
-                self.tokenizer.encode(instance['translation'][target_lang], bos=False, eos=True)
-            )
-            self.tokens.append([instance_toks, end_pos])
+            tokens, start_position = self._prepare_instance(instance)
+            self.tokens.append([tokens, start_position])
+    
+    def _prepare_instance(self, instance) -> Tuple[torch.Tensor, int]:
+        """prepares the string, tokenizes, returns tokens and start position"""
+        input_string = f"Translate from {self.source_lang} to {self.target_lang}\n"
+        if self.few_shot_examples is not None:
+            for fs_instance in self.few_shot_examples:
+                input_string += f"{self.source_lang}: {fs_instance['source']}; {self.target_lang}: {fs_instance['target']}\n"
+        input_string += f"{self.source_lang}: {instance['translation'][self.source_lang]}; {self.target_lang}: "
+        input_tokens = self.tokenizer.encode(input_string, bos=True, eos=False)
+        start_position = len(input_tokens)
+        target_tokens = self.tokenizer.encode(instance['translation'][self.target_lang], bos=False, eos=True)
+        return input_tokens+target_tokens, start_position
+
 
     def __getitem__(self, idx: int) -> list:
         """
@@ -82,6 +92,10 @@ class DataLoader:
         batch, start_positions = self.prepare_batch()
         self.idx += self.batch_size
         return batch, start_positions
+
+    def __len__(self) -> int:
+        """returns the length"""
+        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
     
 
     def prepare_batch(self) -> Tuple[torch.Tensor]:
@@ -93,7 +107,7 @@ class DataLoader:
         # it will either be efficient or won't use gpu parallelization properly
         # but it will save space
         max_seq_len = max(len(token) for token in tokens)
-        batch = self.tokenizer.pad_id*torch.ones(size=(len(tokens), max_seq_len), dtype=torch.long)
+        batch = self.tokenizer.special_tokens["<|eot_id|>"]*torch.ones(size=(len(tokens), max_seq_len), dtype=torch.long)
         for i, token in enumerate(tokens):
             batch[i][:len(token)] = torch.tensor(token, dtype=torch.long)
         start_positions = torch.tensor(start_positions, dtype=torch.long).reshape((batch.shape[0], 1))
@@ -101,12 +115,37 @@ class DataLoader:
 
 
 if __name__ == "__main__":
-    from config import LLAMA_PATH
+    from config import llama_path
+    from tokenizer import Tokenizer
+    few_shot_examples = [
+        {
+            "source": "Ich gehe morgen ins Kino.", 
+            "target": "I am going to the cinema tomorrow."
+        },
+        {
+            "source": "Er ist ein sehr guter Koch.", 
+            "target": "He is a very good cook."
+        },
+        {
+            "source": "Das Wetter ist heute schön.", 
+            "target": "The weather is nice today."
+        },
+        {
+            "source": "Wir haben gestern einen langen Spaziergang gemacht.", 
+            "target": "We took a long walk yesterday."
+        },
+        {
+            "source": "Kannst du mir bitte helfen?", 
+            "target": "Can you please help me?"
+        }
+    ]
+    tokenizer = Tokenizer(model_path=f"{llama_path}/tokenizer.model")
     ds = TranslationDataset(
         dataset_hf_id="de-en",
         source_lang="de",
         target_lang = "en",
         split = "validation",
-        tokenizer_path = f"{LLAMA_PATH}/tokenizer.model"
+        tokenizer=tokenizer,
+        few_shot_examples=few_shot_examples
     )
     print(ds[0])

@@ -87,10 +87,7 @@ class Tokenizer:
         # BOS / EOS token IDs
         self.bos_id: int = self.special_tokens["<|begin_of_text|>"]
         self.eos_id: int = self.special_tokens["<|end_of_text|>"]
-        # pad_id is -1 in the official llama code
-        # changed it here to a +ve value so that it passes through the embedding layer
-        # will it cause any problem?
-        self.pad_id: int = 130000
+        self.pad_id: int = -1
         self.stop_tokens = {
             self.special_tokens["<|end_of_text|>"],
             self.special_tokens["<|eot_id|>"],
