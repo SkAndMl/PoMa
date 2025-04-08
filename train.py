@@ -58,8 +58,6 @@ def evaluate() -> float:
         batch, start_pos = batch.to(device), start_pos.to(device)
         logits: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
         for i, val in logits.items():
-            if i==0: 
-                continue
             logits_i = val[:, :-i-1, :]
             tgt = batch[:, i+1:]
             b, s = logits_i.shape[:-1]
@@ -85,9 +83,6 @@ def train():
             
             optimizer.zero_grad()
             for i, val in logits.items():
-                if i==0: 
-                    # lm_head is frozen, so no need to backprop for the ntp just yet
-                    continue
                 logits_i = val[:, :-i-1, :]
                 tgt = batch[:, i+1:]
                 b, s = logits_i.shape[:-1]

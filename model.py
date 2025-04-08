@@ -293,8 +293,11 @@ class GPTk(nn.Module):
         self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k-1))
         # freeze base_model params
         # might need to unfreeze the lm_head in the future depending on how the experiments go :)
-        for param in self.base_model.parameters():
-            param.requires_grad = False
+        for name, param in self.base_model.named_parameters():
+            if name!="output.weight":
+                param.requires_grad = False
+            else:
+                print("skipping for the output layer")
     
     def _load_model(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int):
         """
