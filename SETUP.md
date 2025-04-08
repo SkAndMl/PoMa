@@ -87,3 +87,8 @@ Notes:
 1. scp gpt-k (after you are in the desired branch)
 2. scp llama 1B model
 3. change llama_path in config.py to the location of the folder in NSCC
+4. If you encounter quota/memory exceeded error, try clearing the caches of HF and torch.
+5. Torch with cuda11.8 support: 
+```bash
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
