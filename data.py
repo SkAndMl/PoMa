@@ -4,6 +4,7 @@ import os
 import torch
 from tokenizer import Tokenizer
 from typing import Tuple, List, Optional, Dict
+import config
 
 class TranslationDataset(Dataset):
     """
@@ -15,27 +16,34 @@ class TranslationDataset(Dataset):
         source_lang: str, 
         target_lang: str, 
         split: str,
-        few_shot_examples: Optional[List[Dict[str, str]]],
-        tokenizer: Tokenizer
+        tokenizer: Tokenizer,
+        max_seq_len: int,
+        num_instances: Optional[int] = None,
+        few_shot_examples: Optional[List[Dict[str, str]]] = None
     ) -> None:
         """
         constructs
         """
         assert split in ["train", "validation", "test"], f"split must be train, validation or test"
         try:
-            ds = load_dataset("wmt14", dataset_hf_id)
+            ds = load_dataset("wmt14", dataset_hf_id, split=split)
         except Exception as e:
             raise ValueError(f"{dataset_hf_id} is invalid")
         
         self.few_shot_examples = few_shot_examples
+        if few_shot_examples is None and dataset_hf_id in config.FEW_SHOT_EXAMPLES:
+                self.few_shot_examples = config.FEW_SHOT_EXAMPLES[dataset_hf_id]
+
         self.tokenizer = tokenizer
         self.source_lang = source_lang
         self.target_lang = target_lang
-        data = ds[split]
+        self.max_seq_len = max_seq_len
+
+        num_instances = min(ds.num_rows, num_instances) if num_instances is not None else ds.num_rows
         self.tokens = []
-        for instance in data:
+        for instance in ds['translation'][:num_instances]:
             tokens, start_position = self._prepare_instance(instance)
-            self.tokens.append([tokens, start_position])
+            self.tokens.append([tokens[:self.max_seq_len], start_position])
     
     def _prepare_instance(self, instance) -> Tuple[torch.Tensor, int]:
         """prepares the string, tokenizes, returns tokens and start position"""
@@ -43,10 +51,10 @@ class TranslationDataset(Dataset):
         if self.few_shot_examples is not None:
             for fs_instance in self.few_shot_examples:
                 input_string += f"{self.source_lang}: {fs_instance['source']}; {self.target_lang}: {fs_instance['target']}\n"
-        input_string += f"{self.source_lang}: {instance['translation'][self.source_lang]}; {self.target_lang}: "
+        input_string += f"{self.source_lang}: {instance[self.source_lang]}; {self.target_lang}: "
         input_tokens = self.tokenizer.encode(input_string, bos=True, eos=False)
         start_position = len(input_tokens)
-        target_tokens = self.tokenizer.encode(instance['translation'][self.target_lang], bos=False, eos=True)
+        target_tokens = self.tokenizer.encode(instance[self.target_lang], bos=False, eos=True)
         return input_tokens+target_tokens, start_position
 
 

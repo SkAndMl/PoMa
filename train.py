@@ -8,16 +8,21 @@ from model import GPTk
 from typing import Dict
 from collections import defaultdict
 import json
+import gc
 
 logger = create_logger()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"{device=}")
+if device=="cuda":
+    torch.cuda.empty_cache()
+    gc.collect()
+
 tokenizer = Tokenizer(f"{config.llama_path}/tokenizer.model")
 model = GPTk(ckpt_path=config.llama_path, 
             device=device,
-            max_seq_len=config.max_batch_size, 
-            max_batch_size=config.max_seq_len,
-            k=config.k)
+            max_seq_len=config.max_seq_len, 
+            max_batch_size=config.max_batch_size,
+            k=config.k).to(device)
 logger.info(f"loaded tokenizer and model")
 
 train_ds = TranslationDataset(
@@ -25,14 +30,18 @@ train_ds = TranslationDataset(
     source_lang="de",
     target_lang="en",
     split="train",
-    tokenizer=tokenizer
+    tokenizer=tokenizer,
+    max_seq_len=config.max_seq_len,
+    num_instances=config.num_train_instances
 )
 val_ds = TranslationDataset(
     dataset_hf_id="de-en",
     source_lang="de",
     target_lang="en",
     split="validation",
-    tokenizer=tokenizer 
+    max_seq_len=config.max_seq_len,
+    tokenizer=tokenizer,
+    num_instances=config.num_eval_instances
 )
 train_dl = DataLoader(train_ds, config.max_batch_size, tokenizer)
 val_dl = DataLoader(val_ds, config.max_batch_size, tokenizer)
@@ -95,3 +104,7 @@ def train():
         logger.info(f"time took: {end_time-start_time:.2f}")
         logger.info(f"train loss: {json.dumps(accumulated_loss)}")
         logger.info(f"validation loss: {json.dumps(validation_accumlated_loss)}")
+    
+
+if __name__ == "__main__":
+    train()
