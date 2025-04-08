@@ -92,3 +92,7 @@ Notes:
 ```bash
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
+6. For debugging, run in interactive mode:
+```bash
+qsub -I submit.sh
+```
