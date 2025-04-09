@@ -1,13 +1,11 @@
-from utils import create_logger
+from utils import create_logger, calculate_per_token_accuracy
 from tokenizer import Tokenizer
 from data import TranslationDataset, DataLoader
 import config
 import torch
-import time
 from model import GPTk
-from typing import Dict
+from typing import Dict, Tuple
 from collections import defaultdict
-import json
 import gc
 
 logger = create_logger()
@@ -41,7 +39,6 @@ val_ds = TranslationDataset(
     split="validation",
     max_seq_len=config.max_seq_len,
     tokenizer=tokenizer,
-    num_instances=config.num_eval_instances
 )
 train_dl = DataLoader(train_ds, config.max_batch_size, tokenizer)
 val_dl = DataLoader(val_ds, config.max_batch_size, tokenizer)
@@ -51,54 +48,65 @@ optimizer = torch.optim.Adam(params=model.parameters(), lr=config.lr, weight_dec
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.special_tokens["<|eot_id|>"])
 
 @torch.inference_mode()
-def evaluate() -> float:
+def evaluate() -> Tuple[Dict[int, float]]:
     model.eval()
     accumulated_loss = defaultdict(float)
+    accumulated_per_token_accuracy = defaultdict(float)
     for batch, start_pos in val_dl:
         batch, start_pos = batch.to(device), start_pos.to(device)
-        logits: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
-        for i, val in logits.items():
+        logits_dict: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
+        for i, val in logits_dict.items():
             logits_i = val[:, :-i-1, :]
             tgt = batch[:, i+1:]
             b, s = logits_i.shape[:-1]
             assert (b, s) == tuple(tgt.shape)
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
             accumulated_loss[i] += loss.item()
+
+        per_token_accuracy = calculate_per_token_accuracy(logits_dict, batch, tokenizer.special_tokens["<|eot_id|>"])
+        for i, val in per_token_accuracy:
+            accumulated_per_token_accuracy[i] += per_token_accuracy[i]
     
     model.train()
     accumulated_loss = {i: accumulated_loss[i]/len(val_dl) for i in accumulated_loss}
-    return accumulated_loss
+    accumulated_per_token_accuracy = {i: v/len(val_dl) for i,v in accumulated_per_token_accuracy.items()}
+    return accumulated_loss, accumulated_per_token_accuracy
 
 def train():
     """
     this is just a template
     kindly modify the training loop based on the model api
     """
-    for epoch in range(config.epochs):
-        accumulated_loss = defaultdict(float)
-        start_time = time.time()
-        for batch, start_pos in train_dl:
-            batch, start_pos = batch.to(device), start_pos.to(device)
-            logits: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
-            
-            optimizer.zero_grad()
-            for i, val in logits.items():
-                logits_i = val[:, :-i-1, :]
-                tgt = batch[:, i+1:]
-                b, s = logits_i.shape[:-1]
-                assert (b, s) == tuple(tgt.shape)
-                loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
-                loss.backward()
-                accumulated_loss[i] += loss.item()
-            
-            optimizer.step()
+    accumulated_loss = defaultdict(float)
+    for step, (batch, start_pos) in enumerate(train_dl):
+        batch, start_pos = batch.to(device), start_pos.to(device)
+        logits: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
+        
+        optimizer.zero_grad()
+        for i, val in logits.items():
+            logits_i = val[:, :-i-1, :]
+            tgt = batch[:, i+1:]
+            b, s = logits_i.shape[:-1]
+            assert (b, s) == tuple(tgt.shape)
+            loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
+            loss.backward()
+            accumulated_loss[i] += loss.item()
+        
+        optimizer.step()
 
-        end_time = time.time()
-        accumulated_loss = {i: accumulated_loss[i]/len(train_dl) for i in accumulated_loss}
-        validation_accumlated_loss = evaluate()
-        logger.info(f"time took: {end_time-start_time:.2f}")
-        logger.info(f"train loss: {json.dumps(accumulated_loss)}")
-        logger.info(f"validation loss: {json.dumps(validation_accumlated_loss)}")
+        if (step+1)%config.print_loss_every==0:
+            accumulated_loss = {i:accumulated_loss[i]/config.print_loss_every for i in accumulated_loss}
+            log_str = f"train step: {step+1:5d} | "
+            log_str += " | ".join(f"{k}: {v:.4f}" for k,v in accumulated_loss.items())
+            logger.info(log_str)
+            accumulated_loss = defaultdict(float)
+        
+        if (step+1)%config.eval_step==0:
+            validation_accumulated_loss, validation_accumulated_per_token_accuracy = evaluate()
+            log_str = f"val step: {step+1:5d} | "
+            log_str += " | ".join(f"{k}: {v:.4f}" for k,v in validation_accumulated_loss.items())
+            log_str += " | ".join(f"acc {k}: {v*100:.2f}" for k,v in validation_accumulated_per_token_accuracy.items())
+            logger.info(log_str)
     
 
 if __name__ == "__main__":

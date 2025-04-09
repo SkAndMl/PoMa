@@ -3,12 +3,12 @@ llama_path = "/Users/sathyakrishnansuresh/.llama/checkpoints/Llama3.2-1B"
 # TODO: all these params are randomly set. should be tuned
 max_seq_len = 512
 max_batch_size = 8
-epochs = 3
 lr = 3e-4
 wd = 1e-2
 k = 3
-num_train_instances = 100
-num_eval_instances = 100
+num_train_instances = 10000
+eval_step = num_train_instances//10
+print_loss_every = num_train_instances//5
 
 FEW_SHOT_EXAMPLES = {
     "de-en": [
