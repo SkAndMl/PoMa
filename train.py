@@ -64,7 +64,7 @@ def evaluate() -> Tuple[Dict[int, float]]:
             accumulated_loss[i] += loss.item()
 
         per_token_accuracy = calculate_per_token_accuracy(logits_dict, batch, tokenizer.special_tokens["<|eot_id|>"])
-        for i, val in per_token_accuracy:
+        for i in per_token_accuracy:
             accumulated_per_token_accuracy[i] += per_token_accuracy[i]
     
     model.train()
@@ -105,7 +105,7 @@ def train():
             validation_accumulated_loss, validation_accumulated_per_token_accuracy = evaluate()
             log_str = f"val step: {step+1:5d} | "
             log_str += " | ".join(f"{k}: {v:.4f}" for k,v in validation_accumulated_loss.items())
-            log_str += " | ".join(f"acc {k}: {v*100:.2f}" for k,v in validation_accumulated_per_token_accuracy.items())
+            log_str += " " + " | ".join(f"acc {k}: {v*100:.2f}" for k,v in validation_accumulated_per_token_accuracy.items())
             logger.info(log_str)
     
 
