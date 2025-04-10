@@ -30,7 +30,8 @@ train_ds = TranslationDataset(
     split="train",
     tokenizer=tokenizer,
     max_seq_len=config.max_seq_len,
-    num_instances=config.num_train_instances
+    num_instances=config.num_train_instances,
+    use_few_shot=True
 )
 val_ds = TranslationDataset(
     dataset_hf_id="de-en",
@@ -39,6 +40,7 @@ val_ds = TranslationDataset(
     split="validation",
     max_seq_len=config.max_seq_len,
     tokenizer=tokenizer,
+    use_few_shot=True
 )
 train_dl = DataLoader(train_ds, config.max_batch_size, tokenizer)
 val_dl = DataLoader(val_ds, config.max_batch_size, tokenizer)
@@ -54,16 +56,21 @@ def evaluate() -> Tuple[Dict[int, float]]:
     accumulated_per_token_accuracy = defaultdict(float)
     for batch, start_pos in val_dl:
         batch, start_pos = batch.to(device), start_pos.to(device)
+        masked_batch = torch.where(
+            torch.arange(batch.shape[1], device=device).view(1, -1) < start_pos,
+            tokenizer.special_tokens["<|eot_id|>"],
+            batch
+        ).to(device)
         logits_dict: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
         for i, val in logits_dict.items():
             logits_i = val[:, :-i-1, :]
-            tgt = batch[:, i+1:]
+            tgt = masked_batch[:, i+1:]
             b, s = logits_i.shape[:-1]
             assert (b, s) == tuple(tgt.shape)
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
             accumulated_loss[i] += loss.item()
 
-        per_token_accuracy = calculate_per_token_accuracy(logits_dict, batch, tokenizer.special_tokens["<|eot_id|>"])
+        per_token_accuracy = calculate_per_token_accuracy(logits_dict, masked_batch, tokenizer.special_tokens["<|eot_id|>"])
         for i in per_token_accuracy:
             accumulated_per_token_accuracy[i] += per_token_accuracy[i]
     
@@ -77,15 +84,23 @@ def train():
     this is just a template
     kindly modify the training loop based on the model api
     """
+    logger.info("Training started")
+    logger.info(f"Total number of training steps: {len(train_dl)}")
+    logger.info(f"Expect logs at every {config.eval_step} and {config.print_loss_every}")
     accumulated_loss = defaultdict(float)
     for step, (batch, start_pos) in enumerate(train_dl):
         batch, start_pos = batch.to(device), start_pos.to(device)
+        masked_batch = torch.where(
+            torch.arange(batch.shape[1], device=device).view(1, -1) < start_pos,
+            tokenizer.special_tokens["<|eot_id|>"],
+            batch
+        ).to(device)
         logits: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
         
         optimizer.zero_grad()
         for i, val in logits.items():
             logits_i = val[:, :-i-1, :]
-            tgt = batch[:, i+1:]
+            tgt = masked_batch[:, i+1:]
             b, s = logits_i.shape[:-1]
             assert (b, s) == tuple(tgt.shape)
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))

@@ -58,13 +58,13 @@ def create_logger():
     return logger
 
 def calculate_per_token_accuracy(logits_dict: Dict[int, torch.Tensor],
-                                 batch: torch.Tensor,
+                                 masked_batch: torch.Tensor,
                                  pad_id: int) -> Dict[int, float]:
     """as the name tells"""
     per_token_accuracy = {}
     for i, val in logits_dict.items():
         logits_i = val[:, :-i-1, :]
-        tgt = batch[:, i+1:]
+        tgt = masked_batch[:, i+1:]
         b, s = logits_i.shape[:-1]
         assert (b, s) == tuple(tgt.shape)
 
