@@ -8,6 +8,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import random
 
 # Setting basics
 SEED = 42
@@ -31,7 +32,6 @@ class config:
     wd: float = 0.05
     epochs: int = 10
     k: int = 3  # Number of steps per backpropagation segment
-    length_target: int = 3
 
 # Model Loading -- Llama
 llm_model = load_model(
@@ -58,7 +58,7 @@ logger.info("LSTM Model Locked and Loaded")
 tokenizer = Tokenizer(os.path.join(config.Llama_path, "tokenizer.model"))
 logger.info("Tokenizer Loaded")
 
-# Loading the train and validation dataset -- setting max sequence length at 10 to see how it works
+# Reducing few shot for fitting into Vram
 few_shot_examples = [
         {
             "source": "Ich gehe morgen ins Kino.", 
@@ -67,23 +67,10 @@ few_shot_examples = [
         {
             "source": "Er ist ein sehr guter Koch.", 
             "target": "He is a very good cook."
-        },
-        {
-            "source": "Das Wetter ist heute schön.", 
-            "target": "The weather is nice today."
-        },
-        {
-            "source": "Wir haben gestern einen langen Spaziergang gemacht.", 
-            "target": "We took a long walk yesterday."
-        },
-        {
-            "source": "Kannst du mir bitte helfen?", 
-            "target": "Can you please help me?"
         }
     ]
 
-# Max seq length set at -1 as we really do not know the average starting point;
-# This can cause issues as we may have samples with no target
+# Adding k to dataloader as Vram inadequate
 train_ds = TranslationDataset(
     dataset_hf_id="de-en",
     source_lang="de",
@@ -92,7 +79,7 @@ train_ds = TranslationDataset(
     tokenizer=tokenizer,
     few_shot_examples = few_shot_examples,
     max_seq_len = -1,
-    num_instances = 15000
+    num_instances = 5000
 )
 
 val_ds = TranslationDataset(
@@ -104,8 +91,8 @@ val_ds = TranslationDataset(
     few_shot_examples = few_shot_examples, 
     max_seq_len = -1
 )
-train_dl = DataLoader(train_ds, config.max_batch_size, tokenizer)
-val_dl = DataLoader(val_ds, config.max_batch_size, tokenizer)
+train_dl = DataLoader(train_ds, config.max_batch_size, tokenizer, k = config.k)
+val_dl = DataLoader(val_ds, config.max_batch_size, tokenizer, k = config.k)
 logger.info("Dataset Locked and Loaded")
 
 # Optimizer and loss function
@@ -139,7 +126,7 @@ for epoch in range(config.epochs):
         # Transfer batch to device.
         batch = batch.to(device)
         # Extract context length (start_pos is a tensor; no need to send an int to device)
-        context_len = start_pos[0, 0].item()
+        context_len = start_pos[0].item()
         logger.info(f"Iteration {i}; Sample Target Length {context_len}")
         # Extract context tokens (already on device)
         context_tensor = batch[:, :context_len]
@@ -151,12 +138,8 @@ for epoch in range(config.epochs):
         
         # Get target tokens (the translation part) and ensure on device.
         target_tensor = batch[:, context_len:].to(device)
-        # If pre-defined target length exists in config:
-        if config.length_target is not None:
-            length_target = config.length_target
-            logger.info(f"Custom Target Length: {length_target}")
-        else:
-            length_target = target_tensor.size(1)
+        # verification
+        assert target_tensor.shape[1] == config.k, "target shape not k"
 
         # Clone current_input so that it can participate in gradient computations.
         current_input = current_input.clone()
@@ -166,8 +149,8 @@ for epoch in range(config.epochs):
         current_step = 0
 
 
-        # Iterative multi-step prediction loop with truncated backpropagation
-        while current_step < length_target:
+        # Iterative multi-step prediction loop 
+        while current_step < config.k:
 
             lstm_logits, _ = model(current_input)  # shape: (bsz, cur_seq_len, vocab)
             # Use logits from final time step for prediction:
@@ -176,19 +159,6 @@ for epoch in range(config.epochs):
             # Compute loss for the current token prediction
             loss = loss_fn(final_token_logit, target_tensor[:, current_step])
             total_loss_tensor += loss
-
-            # Backpropagate for every 'k' steps
-            if (current_step + 1) % config.k == 0:
-                mean_loss = total_loss_tensor / config.k
-                # Adding to batch loss
-                batch_loss += mean_loss.item()
-                # Backprop
-                mean_loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-                # Detach to truncate the computation graph
-                current_input = current_input.detach()
-                total_loss_tensor = torch.tensor(0.0, device=device)
             
             # Get predicted token IDs (using argmax)
             final_token_ids = final_token_logit.argmax(dim=1) # shape: (bsz, 1)
@@ -202,16 +172,13 @@ for epoch in range(config.epochs):
 
             current_step += 1
 
-        # Backprop the remaining loss if the last segment was not exactly a multiple of k.
-        if current_step % config.k != 0:
-            mean_loss = total_loss_tensor / (current_step % config.k)
-            mean_loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            # Adding to batch loss
-            batch_loss += mean_loss.item()
-            # One last step
-            current_step += 1
+        # Backprop the loss for k steps
+        mean_loss = total_loss_tensor / config.k
+        mean_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+        # Adding to batch loss
+        batch_loss += mean_loss.item()
 
         # Averaging across all steps taken
         logger.info(f"Iteration {i}; Batch Loss: {batch_loss / current_step}")
@@ -235,14 +202,17 @@ for epoch in range(config.epochs):
 
 
     logger.info(f"Epoch {epoch+1} Validation Start:")
+    print(f"EPOCH: {epoch+1} VALIDATION:")
 
     with torch.no_grad():
         for (val_batch, val_start_pos) in val_dl:
             val_batch = val_batch.to(device)
 
+            
+
             # Obtain context length from the validation start positions.
             # Here, we use val_start_pos (not start_pos, which is for training)
-            context_len = val_start_pos[0, 0].item()
+            context_len = val_start_pos[0].item()
 
             # Create context tensor and forward pass through Llama
             context_tensor = val_batch[:, :context_len]
@@ -250,14 +220,18 @@ for epoch in range(config.epochs):
 
             # Create target tensor and ensure it's on device.
             target_tensor = val_batch[:, context_len:].to(device)
-            length_target = target_tensor.size(1)
+            # verification
+            assert target_tensor.shape[1] == config.k, "target shape not k"
+
 
             # We will perform exactly config.k iterative steps.
             current_step = 0
             batch_loss_tensor = torch.tensor(0.0, device=device)
             batch_size = val_batch.shape[0]
             
-
+            # Visualizing sample -- random
+            visualization_tensor = context_tensor[0, :].unsqueeze(0)
+            
             # Forward pass only for k tokens
             while current_step < config.k:
                 lstm_logits, _ = model(current_input)  # shape: (batch_size, cur_seq_len, vocab)
@@ -269,12 +243,15 @@ for epoch in range(config.epochs):
 
                 # Obtain predicted token IDs
                 predicted_ids = final_token_logit.argmax(dim=1)  # shape: (batch_size,)
-
+                # Adding to the visualization tensor
+                visualization_tensor = torch.cat([visualization_tensor, torch.tensor([[predicted_ids[0]]], device = device)], dim = -1)
+                
                 # Update token-level accuracy for this step
                 # Compare predicted_ids with the ground truth for current step
                 ground_truth = target_tensor[:, current_step]  # shape: (batch_size,)
                 # Count element-wise matches: convert boolean tensor to int
                 token_correct[current_step] += (predicted_ids == ground_truth).sum().item()
+
                 token_total[current_step] += batch_size
 
 
@@ -290,6 +267,10 @@ for epoch in range(config.epochs):
             batch_mean_loss = batch_loss_tensor / config.k
             val_loss += batch_mean_loss.item()
             num_val_batches += 1
+            # printing random sample
+            print(f"A Random Sample for Visualization:")
+            print(tokenizer.decode(visualization_tensor[0].tolist()))
+            print("\n")
 
 
     # Compute average validation loss over all batches
@@ -297,6 +278,7 @@ for epoch in range(config.epochs):
 
     # Compute per-token (k-step) accuracy percentages:
     token_accuracies = [100 * (token_correct[i] / token_total[i]) for i in range(config.k)]
+
 
     # Log the results:
     logger.info(f"Epoch {epoch+1} Validation Loss: {avg_val_loss:.4f}")

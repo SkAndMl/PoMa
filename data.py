@@ -85,11 +85,13 @@ class DataLoader:
         dataset: Dataset,
         batch_size: int,
         tokenizer: Tokenizer,
+        k: int
     ) -> None:
         self.dataset = dataset
         self.batch_size = batch_size
         self.tokenizer = tokenizer
         self.idx = 0
+        self.k = k
     
     def __iter__(self):
         self.idx = 0
@@ -109,18 +111,29 @@ class DataLoader:
 
     def prepare_batch(self) -> Tuple[torch.Tensor]:
         """
-        batches inputs into the same seq_len 
+        Creating batches with padding for context and target
         """
         tokens, start_positions = self.dataset[self.idx:self.idx+self.batch_size]
-        # padding it to max_len per seq
-        # it will either be efficient or won't use gpu parallelization properly
-        # but it will save space
-        max_seq_len = max(len(token) for token in tokens)
-        batch = self.tokenizer.special_tokens["<|eot_id|>"]*torch.ones(size=(len(tokens), max_seq_len), dtype=torch.long)
+        # padding it to max context -- the lstm way of doing it
+        max_context_len = max(start_positions)
+        # Max target length is k
+        max_target_len = self.k
+        # Max token length is context + target
+        max_token_len = max_context_len + max_target_len
+        # Creating batch tensor
+        batch = self.tokenizer.special_tokens["<|eot_id|>"]*torch.ones(size=(len(tokens), max_token_len), dtype = torch.long) # shape = (bsz, max_token_len)
+        # Iterating
         for i, token in enumerate(tokens):
-            batch[i][:len(token)] = torch.tensor(token, dtype=torch.long)
-        start_positions = torch.tensor(start_positions, dtype=torch.long).reshape((batch.shape[0], 1))
-        return batch, start_positions
+            start_pos = start_positions[i]
+            # Assigning context with padding to batch
+            batch[i][:start_pos] =  torch.tensor(token[:start_pos], dtype = torch.long)
+            # Assigning the target -- k tokens
+            # In case there are fewer tokens than k -- can't believe this exists
+            target_len = min(self.k, len(token[start_pos:]))
+            batch[i][max_context_len: max_context_len + target_len] = torch.tensor(token[start_pos: start_pos + target_len], dtype = torch.long)
+
+        start_position = torch.tensor([max_context_len], dtype = torch.long)
+        return batch, start_position
 
 
 if __name__ == "__main__":
@@ -135,18 +148,6 @@ if __name__ == "__main__":
             "source": "Er ist ein sehr guter Koch.", 
             "target": "He is a very good cook."
         },
-        {
-            "source": "Das Wetter ist heute schön.", 
-            "target": "The weather is nice today."
-        },
-        {
-            "source": "Wir haben gestern einen langen Spaziergang gemacht.", 
-            "target": "We took a long walk yesterday."
-        },
-        {
-            "source": "Kannst du mir bitte helfen?", 
-            "target": "Can you please help me?"
-        }
     ]
     tokenizer = Tokenizer(model_path=f"{llama_path}/tokenizer.model")
     ds = TranslationDataset(
