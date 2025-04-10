@@ -69,7 +69,9 @@ def calculate_per_token_accuracy(logits_dict: Dict[int, torch.Tensor],
         assert (b, s) == tuple(tgt.shape)
 
         logits_i, tgt = logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1)
-        masked_equality = torch.where(tgt!=pad_id, logits_i.argmax(dim=-1)==tgt, -1)
+        _, topk_indices = torch.topk(logits_i, k=5, dim=-1)
+        top5_mask = torch.any(topk_indices == tgt.unsqueeze(-1), dim=-1)
+        masked_equality = torch.where(tgt != pad_id, top5_mask, -1)
         num_correct = masked_equality[masked_equality!=-1].sum()
         total_num = masked_equality[masked_equality!=-1].shape[0]
         per_token_accuracy[i] = num_correct/total_num
