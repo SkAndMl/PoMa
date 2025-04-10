@@ -285,7 +285,15 @@ class GPTk(nn.Module):
     """
     pos-embedding variant of gpt-k
     """
-    def __init__(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int, k: int) -> None:
+    def __init__(
+        self, 
+        ckpt_path: str, 
+        device: str, 
+        max_batch_size: int, 
+        max_seq_len: int, 
+        k: int,
+        freeze_lm_head: Optional[bool] = False
+    ) -> None:
         super().__init__()
         assert k>=2, "if not >=2 mtp makes no sense"
         self.base_model = self._load_model(ckpt_path, device, max_batch_size, max_seq_len)
@@ -294,10 +302,15 @@ class GPTk(nn.Module):
         # freeze base_model params
         # might need to unfreeze the lm_head in the future depending on how the experiments go :)
         for name, param in self.base_model.named_parameters():
-            if name!="output.weight":
-                param.requires_grad = False
+            if name=="output.weight":
+                if freeze_lm_head:
+                    print(f"freezing lm_head")
+                    param.requires_grad = False
+                    continue
+                else:
+                    print(f"not freezing lm_head")
             else:
-                print("skipping for the output layer")
+                param.requires_grad = False
     
     def _load_model(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int):
         """

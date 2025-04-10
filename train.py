@@ -20,6 +20,7 @@ model = GPTk(ckpt_path=config.llama_path,
             device=device,
             max_seq_len=config.max_seq_len, 
             max_batch_size=config.max_batch_size,
+            freeze_lm_head = config.freeze_lm_head,
             k=config.k).to(device)
 logger.info(f"loaded tokenizer and model")
 
@@ -104,11 +105,12 @@ def train():
             b, s = logits_i.shape[:-1]
             assert (b, s) == tuple(tgt.shape)
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
-            loss.backward()
             accumulated_loss[i] += loss.item()
-        
+            if i==0 and config.freeze_lm_head:
+                continue
+            loss.backward()
+              
         optimizer.step()
-
         if (step+1)%config.print_loss_every==0:
             accumulated_loss = {i:accumulated_loss[i]/config.print_loss_every for i in accumulated_loss}
             log_str = f"train step: {step+1:5d} | "
