@@ -9,6 +9,7 @@ from collections import defaultdict
 import gc
 
 logger = create_logger()
+logger.info(f"Running model: {config.llama_path.split('/')[-1]}")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"{device=}")
 if device=="cuda":

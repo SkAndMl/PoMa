@@ -6,6 +6,7 @@ import json
 import os
 import logging
 from typing import Dict
+from datetime import datetime
 
 @torch.inference_mode()
 def generate(model, max_tokens: int, prompt: str, tokenizer: Tokenizer, device: str) -> str:
@@ -46,9 +47,10 @@ def load_model(ckpt_path: str, device: str, max_batch_size: int, max_seq_len: in
     return model.to(device)
 
 def create_logger():
+    current_date = datetime.now().strftime('%Y-%m-%d')
     logger = logging.getLogger("training")
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler('training.log', mode='w')
+    file_handler = logging.FileHandler(f'training_{current_date}.log', mode='w')
     console_handler = logging.StreamHandler()
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S')
     file_handler.setFormatter(formatter)
