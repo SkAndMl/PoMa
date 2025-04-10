@@ -5,13 +5,14 @@ from pathlib import Path
 import json
 import os
 import logging
+import random
 
 @torch.inference_mode()
 def generate(model, max_tokens: int, prompt: str, tokenizer: Tokenizer, device: str) -> str:
     """
     generates content
     """
-    assert device in {"cpu", "cuda"}
+    assert device in {"cpu", "cuda", "mps"}
     model = model.to(device)
     model.eval()
     tokens = torch.tensor([tokenizer.encode(prompt, bos=True, eos=False)]).to(device)
@@ -26,7 +27,7 @@ def load_model(ckpt_path: str, device: str, max_batch_size: int, max_seq_len: in
     """
     loads the weights into the model
     """
-    assert device in {"cpu", "cuda"}
+    assert device in {"cpu", "cuda", "mps"}
     assert os.path.isdir(ckpt_path)
     cp = list(Path(ckpt_path).glob("*.pth"))
     assert len(cp)>0, f"{ckpt_path} has no .pth files!"
@@ -55,3 +56,30 @@ def create_logger():
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     return logger
+
+def set_seed(seed: int) -> None:
+    """
+    Sets the seed for generating random numbers in Python, NumPy, and PyTorch.
+    This helps to ensure reproducibility across runs.
+
+    Parameters:
+        seed (int): The seed value to be used for reproducibility.
+
+    Returns:
+        None
+    """
+    # Python's built-in random module
+    random.seed(seed)
+    
+    # NumPy's random module
+    ##np.random.seed(seed)
+    
+    # PyTorch CPU and GPU seeds
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    
+    # Additional settings for PyTorch to ensure reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False

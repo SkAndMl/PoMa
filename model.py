@@ -11,11 +11,11 @@ from torch import nn
 
 @dataclass
 class ModelArgs:
-    dim: int = 4096
+    dim: int = 2048
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
-    vocab_size: int = -1
+    vocab_size: int = 128,256
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
@@ -215,7 +215,7 @@ class TransformerBlock(nn.Module):
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
-
+# The main model class
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -226,12 +226,14 @@ class Transformer(nn.Module):
         self.tok_embeddings = nn.Embedding(
             params.vocab_size, params.dim
         )
-
+        
+        # Layers made with transformer blocks
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
-
+        # Normalization with RMSNorm
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        # The LM Head -- Removed in my implementation
         self.output = nn.Linear(
             params.dim, params.vocab_size, bias=False
         )
@@ -266,5 +268,5 @@ class Transformer(nn.Module):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        output = self.output(h).float()
-        return output
+        #output = self.output(h).float()
+        return h
