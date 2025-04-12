@@ -46,11 +46,11 @@ def load_model(ckpt_path: str, device: str, max_batch_size: int, max_seq_len: in
     model.load_state_dict(wt)
     return model.to(device)
 
-def create_logger():
+def create_logger(log_file_name):
     current_date = datetime.now().strftime('%Y-%m-%d')
     logger = logging.getLogger("training")
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f'training_{current_date}.log', mode='w')
+    file_handler = logging.FileHandler(f'training_{log_file_name}_{current_date}.log', mode='w')
     console_handler = logging.StreamHandler()
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S')
     file_handler.setFormatter(formatter)
@@ -61,7 +61,8 @@ def create_logger():
 
 def calculate_per_token_accuracy(logits_dict: Dict[int, torch.Tensor],
                                  masked_batch: torch.Tensor,
-                                 pad_id: int) -> Dict[int, float]:
+                                 pad_id: int,
+                                 top_k: int) -> Dict[int, float]:
     """as the name tells"""
     per_token_accuracy = {}
     for i, val in logits_dict.items():
@@ -71,9 +72,9 @@ def calculate_per_token_accuracy(logits_dict: Dict[int, torch.Tensor],
         assert (b, s) == tuple(tgt.shape)
 
         logits_i, tgt = logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1)
-        _, topk_indices = torch.topk(logits_i, k=5, dim=-1)
-        top5_mask = torch.any(topk_indices == tgt.unsqueeze(-1), dim=-1)
-        masked_equality = torch.where(tgt != pad_id, top5_mask, -1)
+        _, topk_indices = torch.topk(logits_i, k=top_k, dim=-1)
+        topk_mask = torch.any(topk_indices == tgt.unsqueeze(-1), dim=-1)
+        masked_equality = torch.where(tgt != pad_id, topk_mask, -1)
         num_correct = masked_equality[masked_equality!=-1].sum()
         total_num = masked_equality[masked_equality!=-1].shape[0]
         per_token_accuracy[i] = num_correct/total_num

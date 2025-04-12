@@ -298,7 +298,7 @@ class GPTk(nn.Module):
         assert k>=2, "if not >=2 mtp makes no sense"
         self.base_model = self._load_model(ckpt_path, device, max_batch_size, max_seq_len)
         self.k = k
-        self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k-1))
+        self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k))
         # freeze base_model params
         # might need to unfreeze the lm_head in the future depending on how the experiments go :)
         for name, param in self.base_model.named_parameters():
@@ -352,8 +352,7 @@ class GPTk(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
 
         position_logits = {}
-        position_logits[0] = self.base_model.output(self.base_model.norm(h)).float()
         for i, embedding_layer in enumerate(self.pos_embeddings):
             modified_h = embedding_layer(h, seqlen) 
-            position_logits[i+1] = self.base_model.output(modified_h) # i+1 because pos_embeddings is of len k-1
+            position_logits[i] = self.base_model.output(modified_h)
         return position_logits

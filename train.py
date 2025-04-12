@@ -8,7 +8,8 @@ from typing import Dict, Tuple
 from collections import defaultdict
 import gc
 
-logger = create_logger()
+log_file_name = config.llama_path.split('/')[-1] + f"_k={config.k}_top_k={config.top_k}"
+logger = create_logger(log_file_name=log_file_name)
 logger.info(f"Running model: {config.llama_path.split('/')[-1]}")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"{device=}")
@@ -72,7 +73,7 @@ def evaluate() -> Tuple[Dict[int, float]]:
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
             accumulated_loss[i] += loss.item()
 
-        per_token_accuracy = calculate_per_token_accuracy(logits_dict, masked_batch, tokenizer.special_tokens["<|eot_id|>"])
+        per_token_accuracy = calculate_per_token_accuracy(logits_dict, masked_batch, tokenizer.special_tokens["<|eot_id|>"], top_k=config.top_k)
         for i in per_token_accuracy:
             accumulated_per_token_accuracy[i] += per_token_accuracy[i]
     
