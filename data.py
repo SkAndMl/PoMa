@@ -18,8 +18,9 @@ class TranslationDataset(Dataset):
         split: str,
         tokenizer: Tokenizer,
         max_seq_len: int,
+        k: int,
         num_instances: Optional[int] = None,
-        few_shot_examples: Optional[List[Dict[str, str]]] = None
+        few_shot_examples: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """
         constructs
@@ -40,11 +41,21 @@ class TranslationDataset(Dataset):
         self.target_lang = target_lang
         self.max_seq_len = max_seq_len
 
+        # Added so that we can filter out sequence which are smaller than k
+        self.k = k
+
         num_instances = min(ds.num_rows, num_instances) if num_instances is not None else ds.num_rows
         self.tokens = []
         for instance in ds['translation'][:num_instances]:
             tokens, start_position = self._prepare_instance(instance)
-            self.tokens.append([tokens[:self.max_seq_len], start_position])
+
+            # Tokens with target length less than k not allowed
+            if len(tokens[start_position:]) >= k:
+                # In case sequence length needs to be altered
+                if self.max_seq_len != -1:
+                    tokens = tokens[:self.max_seq_len]
+                # Appending tokens
+                self.tokens.append([tokens, start_position])
     
     def _prepare_instance(self, instance) -> Tuple[torch.Tensor, int]:
         """prepares the string, tokenizes, returns tokens and start position"""
@@ -100,9 +111,9 @@ class DataLoader:
     def __next__(self) -> Tuple[torch.Tensor]:
         if self.idx >= len(self.dataset):
             raise StopIteration
-        batch, start_positions = self.prepare_batch()
+        batch = self.prepare_batch()
         self.idx += self.batch_size
-        return batch, start_positions
+        return batch
 
     def __len__(self) -> int:
         """returns the length"""
@@ -120,21 +131,23 @@ class DataLoader:
         max_target_len = self.k
         # Max token length is context + target
         max_token_len = max_context_len + max_target_len
-        # Creating batch tensor
         batch = self.tokenizer.special_tokens["<|eot_id|>"]*torch.ones(size=(len(tokens), max_token_len), dtype = torch.long) # shape = (bsz, max_token_len)
-        # Iterating
+        
+        # Iterating -- padding done at the start
         for i, token in enumerate(tokens):
+            # Start position of the target
             start_pos = start_positions[i]
-            # Assigning context with padding to batch
-            batch[i][:start_pos] =  torch.tensor(token[:start_pos], dtype = torch.long)
-            # Assigning the target -- k tokens
-            # In case there are fewer tokens than k -- can't believe this exists
-            target_len = min(self.k, len(token[start_pos:]))
-            batch[i][max_context_len: max_context_len + target_len] = torch.tensor(token[start_pos: start_pos + target_len], dtype = torch.long)
+            # new start pos = max_token_len - (start_pos + k)
+            new_start_pos = max_token_len - (start_pos + self.k)
+            try:
+                # The last k will be the target; no need for start positions
+                batch[i][new_start_pos:] = torch.tensor(token[:start_pos + self.k], dtype = torch.long)
+            except:
+                print(f"Start position: {start_pos}; New Start position: {new_start_pos}; Max token length: {max_token_len}")
+                print(f"{self.tokenizer.decode(token)}")
+                
 
-        start_position = torch.tensor([max_context_len], dtype = torch.long)
-        return batch, start_position
-
+        return batch
 
 if __name__ == "__main__":
     from config import llama_path
@@ -148,6 +161,18 @@ if __name__ == "__main__":
             "source": "Er ist ein sehr guter Koch.", 
             "target": "He is a very good cook."
         },
+        {
+            "source": "Das Wetter ist heute schön.", 
+            "target": "The weather is nice today."
+        },
+        {
+            "source": "Wir haben gestern einen langen Spaziergang gemacht.", 
+            "target": "We took a long walk yesterday."
+        },
+        {
+            "source": "Kannst du mir bitte helfen?", 
+            "target": "Can you please help me?"
+        }
     ]
     tokenizer = Tokenizer(model_path=f"{llama_path}/tokenizer.model")
     ds = TranslationDataset(
