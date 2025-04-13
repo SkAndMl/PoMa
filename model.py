@@ -285,19 +285,32 @@ class GPTk(nn.Module):
     """
     pos-embedding variant of gpt-k
     """
-    def __init__(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int, k: int) -> None:
+    def __init__(
+        self, 
+        ckpt_path: str, 
+        device: str, 
+        max_batch_size: int, 
+        max_seq_len: int, 
+        k: int,
+        freeze_lm_head: Optional[bool] = False
+    ) -> None:
         super().__init__()
         assert k>=2, "if not >=2 mtp makes no sense"
         self.base_model = self._load_model(ckpt_path, device, max_batch_size, max_seq_len)
         self.k = k
-        self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k-1))
+        self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k))
         # freeze base_model params
         # might need to unfreeze the lm_head in the future depending on how the experiments go :)
         for name, param in self.base_model.named_parameters():
-            if name!="output.weight":
-                param.requires_grad = False
+            if name=="output.weight":
+                if freeze_lm_head:
+                    print(f"freezing lm_head")
+                    param.requires_grad = False
+                    continue
+                else:
+                    print(f"not freezing lm_head")
             else:
-                print("skipping for the output layer")
+                param.requires_grad = False
     
     def _load_model(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int):
         """
@@ -339,8 +352,7 @@ class GPTk(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
 
         position_logits = {}
-        position_logits[0] = self.base_model.output(self.base_model.norm(h)).float()
         for i, embedding_layer in enumerate(self.pos_embeddings):
             modified_h = embedding_layer(h, seqlen) 
-            position_logits[i+1] = self.base_model.output(modified_h) # i+1 because pos_embeddings is of len k-1
+            position_logits[i] = self.base_model.output(modified_h)
         return position_logits
