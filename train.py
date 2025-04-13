@@ -8,7 +8,9 @@ from typing import Dict, Tuple
 from collections import defaultdict
 import gc
 
-logger = create_logger()
+log_file_name = config.llama_path.split('/')[-1] + f"_k={config.k}_top_k={config.top_k}"
+logger = create_logger(log_file_name=log_file_name)
+logger.info(f"Running model: {config.llama_path.split('/')[-1]}")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"{device=}")
 if device=="cuda":
@@ -20,6 +22,7 @@ model = GPTk(ckpt_path=config.llama_path,
             device=device,
             max_seq_len=config.max_seq_len, 
             max_batch_size=config.max_batch_size,
+            freeze_lm_head = config.freeze_lm_head,
             k=config.k).to(device)
 logger.info(f"loaded tokenizer and model")
 
@@ -30,7 +33,8 @@ train_ds = TranslationDataset(
     split="train",
     tokenizer=tokenizer,
     max_seq_len=config.max_seq_len,
-    num_instances=config.num_train_instances
+    num_instances=config.num_train_instances,
+    use_few_shot=True
 )
 val_ds = TranslationDataset(
     dataset_hf_id="de-en",
@@ -39,6 +43,7 @@ val_ds = TranslationDataset(
     split="validation",
     max_seq_len=config.max_seq_len,
     tokenizer=tokenizer,
+    use_few_shot=True
 )
 train_dl = DataLoader(train_ds, config.max_batch_size, tokenizer)
 val_dl = DataLoader(val_ds, config.max_batch_size, tokenizer)
@@ -54,16 +59,21 @@ def evaluate() -> Tuple[Dict[int, float]]:
     accumulated_per_token_accuracy = defaultdict(float)
     for batch, start_pos in val_dl:
         batch, start_pos = batch.to(device), start_pos.to(device)
+        masked_batch = torch.where(
+            torch.arange(batch.shape[1], device=device).view(1, -1) < start_pos,
+            tokenizer.special_tokens["<|eot_id|>"],
+            batch
+        ).to(device)
         logits_dict: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
         for i, val in logits_dict.items():
             logits_i = val[:, :-i-1, :]
-            tgt = batch[:, i+1:]
+            tgt = masked_batch[:, i+1:]
             b, s = logits_i.shape[:-1]
             assert (b, s) == tuple(tgt.shape)
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
             accumulated_loss[i] += loss.item()
 
-        per_token_accuracy = calculate_per_token_accuracy(logits_dict, batch, tokenizer.special_tokens["<|eot_id|>"])
+        per_token_accuracy = calculate_per_token_accuracy(logits_dict, masked_batch, tokenizer.special_tokens["<|eot_id|>"], top_k=config.top_k)
         for i in per_token_accuracy:
             accumulated_per_token_accuracy[i] += per_token_accuracy[i]
     
@@ -77,23 +87,32 @@ def train():
     this is just a template
     kindly modify the training loop based on the model api
     """
+    logger.info("Training started")
+    logger.info(f"Total number of training steps: {len(train_dl)}")
+    logger.info(f"Expect logs at every {config.eval_step} and {config.print_loss_every}")
     accumulated_loss = defaultdict(float)
     for step, (batch, start_pos) in enumerate(train_dl):
         batch, start_pos = batch.to(device), start_pos.to(device)
+        masked_batch = torch.where(
+            torch.arange(batch.shape[1], device=device).view(1, -1) < start_pos,
+            tokenizer.special_tokens["<|eot_id|>"],
+            batch
+        ).to(device)
         logits: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
         
         optimizer.zero_grad()
         for i, val in logits.items():
             logits_i = val[:, :-i-1, :]
-            tgt = batch[:, i+1:]
+            tgt = masked_batch[:, i+1:]
             b, s = logits_i.shape[:-1]
             assert (b, s) == tuple(tgt.shape)
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
-            loss.backward()
             accumulated_loss[i] += loss.item()
-        
+            if i==0 and config.freeze_lm_head:
+                continue
+            loss.backward()
+              
         optimizer.step()
-
         if (step+1)%config.print_loss_every==0:
             accumulated_loss = {i:accumulated_loss[i]/config.print_loss_every for i in accumulated_loss}
             log_str = f"train step: {step+1:5d} | "

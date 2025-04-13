@@ -19,7 +19,7 @@ class TranslationDataset(Dataset):
         tokenizer: Tokenizer,
         max_seq_len: int,
         num_instances: Optional[int] = None,
-        few_shot_examples: Optional[List[Dict[str, str]]] = None
+        use_few_shot: Optional[bool] = True,
     ) -> None:
         """
         constructs
@@ -30,8 +30,8 @@ class TranslationDataset(Dataset):
         except Exception as e:
             raise ValueError(f"{dataset_hf_id} is invalid")
         
-        self.few_shot_examples = few_shot_examples
-        if few_shot_examples is None and dataset_hf_id in config.FEW_SHOT_EXAMPLES:
+        self.few_shot_examples = None
+        if use_few_shot and dataset_hf_id in config.FEW_SHOT_EXAMPLES:
                 self.few_shot_examples = config.FEW_SHOT_EXAMPLES[dataset_hf_id]
 
         self.tokenizer = tokenizer
@@ -123,7 +123,7 @@ class DataLoader:
 
 
 if __name__ == "__main__":
-    from config import llama_path
+    import config
     from tokenizer import Tokenizer
     few_shot_examples = [
         {
@@ -147,13 +147,15 @@ if __name__ == "__main__":
             "target": "Can you please help me?"
         }
     ]
-    tokenizer = Tokenizer(model_path=f"{llama_path}/tokenizer.model")
+    tokenizer = Tokenizer(model_path=f"{config.llama_path}/tokenizer.model")
     ds = TranslationDataset(
         dataset_hf_id="de-en",
         source_lang="de",
         target_lang = "en",
-        split = "validation",
+        split = "train",
         tokenizer=tokenizer,
-        few_shot_examples=few_shot_examples
+        max_seq_len=config.max_seq_len,
+        num_instances=config.num_train_instances,
+        use_few_shot=False
     )
     print(ds[0])
