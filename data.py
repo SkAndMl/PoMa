@@ -5,6 +5,7 @@ import torch
 from tokenizer import Tokenizer
 from typing import Tuple, List, Optional, Dict
 import config
+from tqdm import tqdm
 
 class TranslationDataset(Dataset):
     """
@@ -55,6 +56,67 @@ class TranslationDataset(Dataset):
         input_tokens = self.tokenizer.encode(input_string, bos=True, eos=False)
         start_position = len(input_tokens)
         target_tokens = self.tokenizer.encode(instance[self.target_lang], bos=False, eos=True)
+        return input_tokens+target_tokens, start_position
+
+
+    def __getitem__(self, idx: int) -> list:
+        """
+        returns tuple of src and tgt tokens
+        """
+        if isinstance(idx, slice):
+            slice_range = range(*idx.indices(len(self.tokens)))
+            tokens = [self.tokens[idx][0] for idx in slice_range]
+            start_positions = [self.tokens[idx][1] for idx in slice_range]
+            return tokens, start_positions
+            
+        assert 0<=idx<len(self.tokens), f"{idx} must be >=0 and < {len(self.tokens)}"
+        return self.tokens[idx]
+    
+    def __len__(self) -> int:
+        return len(self.tokens)
+
+class PyDataset(Dataset):
+    """
+    loads the python dataset
+    """
+    def __init__(
+        self, 
+        hf_id: str, 
+        split: str,
+        tokenizer: Tokenizer,
+        max_seq_len: int,
+    ) -> None:
+        """
+        constructs
+        """
+        assert split in ["train", "test"], f"split must be train or test"
+        try:
+            ds: Dataset = load_dataset(hf_id)['train']
+            ds = ds.shuffle(seed=2406)
+            idx = int(ds.num_rows * 0.9)
+            ds = ds[:idx] if split=="train" else ds[idx:]
+        except Exception as e:
+            raise ValueError(f"{hf_id} is invalid")
+        
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+
+        self.tokens = []
+        for i in tqdm(range(len(ds['input']))):
+            instance = {k:ds[k][i] for k in ds}
+            tokens, start_position = self._prepare_instance(instance)
+            self.tokens.append([tokens[:self.max_seq_len], start_position])
+    
+    def _prepare_instance(self, instance) -> Tuple[torch.Tensor, int]:
+        """prepares the string, tokenizes, returns tokens and start position"""
+        input_string = f"Create python code for the following instruction" + \
+                       " and the input given\n" if len(instance['input'])>0 else "\n"
+        input_string += f"Instruction: {instance['instruction']}\n"
+        if len(instance['input']) > 0:
+            input_string += f"Input: {instance['input']}\n"
+        input_tokens = self.tokenizer.encode(input_string, bos=True, eos=False)
+        start_position = len(input_tokens)
+        target_tokens = self.tokenizer.encode(instance['output'], bos=False, eos=True)
         return input_tokens+target_tokens, start_position
 
 
