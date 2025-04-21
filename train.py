@@ -1,6 +1,6 @@
 from utils import create_logger, calculate_per_token_accuracy
 from tokenizer import Tokenizer
-from data import TranslationDataset, DataLoader
+from data import TranslationDataset, PyDataset, DataLoader
 import config
 import torch
 from model import GPTk
@@ -8,9 +8,10 @@ from typing import Dict, Tuple
 from collections import defaultdict
 import gc
 
-log_file_name = config.llama_path.split('/')[-1] + f"_k={config.k}_top_k={config.top_k}"
+log_file_name = config.llama_path.split('/')[-1] + f"_k={config.k}_top_k={config.top_k}_task={config.task}"
 logger = create_logger(log_file_name=log_file_name)
 logger.info(f"Running model: {config.llama_path.split('/')[-1]}")
+logger.info(f"Task: {config.task}")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"{device=}")
 if device=="cuda":
@@ -26,25 +27,39 @@ model = GPTk(ckpt_path=config.llama_path,
             k=config.k).to(device)
 logger.info(f"loaded tokenizer and model")
 
-train_ds = TranslationDataset(
-    dataset_hf_id="de-en",
-    source_lang="de",
-    target_lang="en",
-    split="train",
-    tokenizer=tokenizer,
-    max_seq_len=config.max_seq_len,
-    num_instances=config.num_train_instances,
-    use_few_shot=True
-)
-val_ds = TranslationDataset(
-    dataset_hf_id="de-en",
-    source_lang="de",
-    target_lang="en",
-    split="validation",
-    max_seq_len=config.max_seq_len,
-    tokenizer=tokenizer,
-    use_few_shot=True
-)
+if config.task == "translation":
+    train_ds = TranslationDataset(
+        dataset_hf_id="de-en",
+        source_lang="de",
+        target_lang="en",
+        split="train",
+        tokenizer=tokenizer,
+        max_seq_len=config.max_seq_len,
+        num_instances=config.num_train_instances,
+        use_few_shot=True
+    )
+    val_ds = TranslationDataset(
+        dataset_hf_id="de-en",
+        source_lang="de",
+        target_lang="en",
+        split="validation",
+        max_seq_len=config.max_seq_len,
+        tokenizer=tokenizer,
+        use_few_shot=True
+    )
+else:
+    train_ds = PyDataset(
+        hf_id=config.PY_DATASET_HF_ID,
+        tokenizer=tokenizer,
+        max_seq_len=config.max_seq_len,
+        split="train"
+    )
+    val_ds = PyDataset(
+        hf_id=config.PY_DATASET_HF_ID,
+        tokenizer=tokenizer,
+        max_seq_len=config.max_seq_len,
+        split="test"
+    )
 train_dl = DataLoader(train_ds, config.max_batch_size, tokenizer)
 val_dl = DataLoader(val_ds, config.max_batch_size, tokenizer)
 # test set should also be loaded but i am too lazy to write that now
