@@ -7,6 +7,7 @@ from model import GPTk
 from typing import Dict, Tuple
 from collections import defaultdict
 import gc
+import os
 
 log_file_name = config.llama_path.split('/')[-1] + f"_k={config.k}_top_k={config.top_k}_task={config.task}"
 logger = create_logger(log_file_name=log_file_name)
@@ -102,10 +103,13 @@ def train():
     this is just a template
     kindly modify the training loop based on the model api
     """
+    if not os.path.exists("ckpts"):
+        os.mkdir("ckpts")
     logger.info("Training started")
     logger.info(f"Total number of training steps: {len(train_dl)}")
     logger.info(f"Expect logs at every {config.eval_step} and {config.print_loss_every}")
     accumulated_loss = defaultdict(float)
+    best_combined_accuracy = float("-inf")
     for step, (batch, start_pos) in enumerate(train_dl):
         batch, start_pos = batch.to(device), start_pos.to(device)
         masked_batch = torch.where(
@@ -141,7 +145,21 @@ def train():
             log_str += " | ".join(f"{k}: {v:.4f}" for k,v in validation_accumulated_loss.items())
             log_str += " " + " | ".join(f"acc {k}: {v*100:.2f}" for k,v in validation_accumulated_per_token_accuracy.items())
             logger.info(log_str)
-    
+
+            if config.save_weights:
+                combined_accuracy = sum([v*100 for v in validation_accumulated_per_token_accuracy.values()])
+                if combined_accuracy > best_combined_accuracy:
+                    best_combined_accuracy = combined_accuracy
+                    logger.info(f"Combined validation accuracy at step: {step+1} is the best so far. Saving the wts")
+                    save_dict = {}
+                    for i, layer in enumerate(model.pos_embeddings):
+                        save_dict[f"pos_embeddings.{i}.embedding.weight"] = layer.embedding.weight.detach().cpu()
+                        save_dict[f"pos_embeddings.{i}.norm.weight"] = layer.norm.weight.detach().cpu()
+
+                    if not config.freeze_lm_head:
+                        save_dict["lm_head.weight"] = model.base_model.output.weight.detach().cpu()
+
+                    torch.save(save_dict, f"ckpts/{log_file_name}.pt")
 
 if __name__ == "__main__":
     train()

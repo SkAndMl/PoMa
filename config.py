@@ -12,6 +12,7 @@ num_train_instances = 20000
 eval_step = num_train_instances//(10*max_batch_size)
 print_loss_every = num_train_instances//(100*max_batch_size)
 task = "programming" # "translation"
+save_weights = False
 
 FEW_SHOT_EXAMPLES = {
     "de-en": [

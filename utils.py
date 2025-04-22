@@ -47,10 +47,12 @@ def load_model(ckpt_path: str, device: str, max_batch_size: int, max_seq_len: in
     return model.to(device)
 
 def create_logger(log_file_name):
+    if not os.path.exists("logs"):
+        os.mkdir("logs")
     current_date = datetime.now().strftime('%Y-%m-%d')
     logger = logging.getLogger("training")
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f'training_{log_file_name}_{current_date}.log', mode='w')
+    file_handler = logging.FileHandler(f'logs/training_{log_file_name}_{current_date}.log', mode='w')
     console_handler = logging.StreamHandler()
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%Y-%m-%d %H:%M:%S')
     file_handler.setFormatter(formatter)
