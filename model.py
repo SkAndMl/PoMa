@@ -299,6 +299,7 @@ class GPTk(nn.Module):
         self.base_model = self._load_model(ckpt_path, device, max_batch_size, max_seq_len)
         self.k = k
         self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k))
+        self.freeze_lm_head = freeze_lm_head
         # freeze base_model params
         # might need to unfreeze the lm_head in the future depending on how the experiments go :)
         for name, param in self.base_model.named_parameters():
@@ -333,6 +334,26 @@ class GPTk(nn.Module):
         model = Transformer(self.params)
         model.load_state_dict(wt)
         return model.to(device)
+    
+    def load_poma_weights(self, poma_ckpt_path: str, device: str = "cuda"):
+        """
+        Load PoMA checkpoint into pos_embeddings and (optionally) LM head.
+        """
+        assert os.path.isfile(poma_ckpt_path), f"{poma_ckpt_path} does not exist!"
+        state_dict = torch.load(poma_ckpt_path, map_location=device)
+        for i, pos_layer in enumerate(self.pos_embeddings):
+            pos_emb_key = f"pos_embeddings.{i}.embedding.weight"
+            pos_norm_key = f"pos_embeddings.{i}.norm.weight"
+            if pos_emb_key in state_dict:
+                pos_layer.embedding.weight.data.copy_(state_dict[pos_emb_key])
+            if pos_norm_key in state_dict:
+                pos_layer.norm.weight.data.copy_(state_dict[pos_norm_key])
+
+        if not self.freeze_lm_head and "lm_head.weight" in state_dict:
+            self.base_model.output.weight.data.copy_(state_dict["lm_head.weight"])
+
+        print(f"Loaded PoMA weights from {poma_ckpt_path}")
+
     
     def forward(self, tokens: torch.Tensor, start_pos: int) -> Dict[int, torch.Tensor]:
         _bsz, seqlen = tokens.shape

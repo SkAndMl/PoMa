@@ -1,5 +1,6 @@
 from tokenizer import Tokenizer
 import torch
+import torch.nn.functional as F
 from model import Transformer, ModelArgs
 from pathlib import Path
 import json
@@ -150,3 +151,26 @@ def plot_k_pos_scores(results_dict, save_fig: bool=False):
             bbox_inches='tight'
         )
     plt.show()
+
+@torch.inference_mode()
+def run_inference(model, tokenizer, prompt: str, k: int = 4, top_k: int = 5, device: str = "cuda") -> Dict[int, list]:
+    """
+    Runs PoMA inference for a single prompt and returns top-k predictions at each of the k positions.
+    """
+    model.eval()
+    input_ids = tokenizer.encode(prompt, bos=True, eos=False)
+    input_tensor = torch.tensor([input_ids], dtype=torch.long).to(device)  # shape: (1, seq_len)
+    start_pos = torch.tensor([len(input_ids)], dtype=torch.long).to(device)
+
+    logits_dict = model(input_tensor, start_pos=0)  # {pos: logits} where logits are (1, seq_len - pos, vocab_size)
+
+    topk_results = {}
+
+    for i in range(k):
+        logits_i = logits_dict[i][0, -1]  # shape: (vocab_size,) -> last position of predicted token for pos i
+        probs_i = F.softmax(logits_i, dim=-1)
+        topk = torch.topk(probs_i, top_k)
+        top_tokens = [tokenizer.decode([idx.item()]) for idx in topk.indices]
+        topk_results[i] = top_tokens
+
+    return topk_results
