@@ -7,6 +7,9 @@ import os
 import logging
 from typing import Dict
 from datetime import datetime
+from collections import defaultdict
+import re
+import matplotlib.pyplot as plt
 
 @torch.inference_mode()
 def generate(model, max_tokens: int, prompt: str, tokenizer: Tokenizer, device: str) -> str:
@@ -82,3 +85,68 @@ def calculate_per_token_accuracy(logits_dict: Dict[int, torch.Tensor],
         per_token_accuracy[i] = num_correct/total_num
     
     return per_token_accuracy
+
+def parse_log_filename(filename: str):
+    pattern = r"training_(?P<model>.+?)_k=(?P<k>\d+)_top_k=(?P<top_k>\d+)_task=(?P<task>.+?)_\d{4}-\d{2}-\d{2}\.log"
+    match = re.match(pattern, filename)
+    if match:
+        return {
+            "model_name": match.group("model"),
+            "k": int(match.group("k")),
+            "top_k": int(match.group("top_k")),
+            "task": match.group("task")
+        }
+    else:
+        raise ValueError("Filename does not match expected pattern.")
+
+
+def get_acc_scores_from_log_file(log_file: str) -> dict:
+    val_acc_k_scores = parse_log_filename(log_file.split("/")[-1])
+    val_acc_k_scores["k_pos_scores"] = defaultdict(list)
+    acc_pattern = r'acc \d: (\d+\.\d+)'
+    with open(log_file, "r") as f:
+        for line in f.readlines():
+            if "val" in line:
+                scores = re.findall(acc_pattern, line.strip())
+                assert len(scores) == val_acc_k_scores["k"]
+                for i in range(len(scores)):
+                    val_acc_k_scores["k_pos_scores"][i].append(float(scores[i]))
+    return val_acc_k_scores
+
+def plot_k_pos_scores(results_dict, save_fig: bool=False):
+    k_pos_scores = results_dict['k_pos_scores']
+    k = results_dict['k']
+    model = results_dict['model_name']
+    top_k_val = results_dict['top_k']
+    task = results_dict['task'].capitalize()
+
+    plt.figure(figsize=(8, 5.5))
+
+    for i in range(k):
+        plt.plot(
+            k_pos_scores[i],
+            marker='o',
+            linewidth=2,
+            label=f'Position {i+1}'
+        )
+
+    plt.title(
+        f'{model} | Task: {task} | MTP (k={k}) | Top-{top_k_val} Accuracy',
+        fontsize=14,
+        fontweight='bold'
+    )
+    plt.xlabel('Training Step', fontsize=11)
+    plt.ylabel(f'Top-{top_k_val} Accuracy', fontsize=11)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend(fontsize=10)
+    plt.tight_layout()
+
+    if save_fig:
+        if not os.path.exists("assets"):
+            os.mkdir("assets")
+        plt.savefig(
+            f"assets/{model}_{task}_k={k}_top_k={top_k_val}.png",
+            dpi=600,
+            bbox_inches='tight'
+        )
+    plt.show()
