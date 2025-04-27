@@ -11,8 +11,9 @@ top_k = 5
 num_train_instances = 20000
 eval_step = num_train_instances//(10*max_batch_size)
 print_loss_every = num_train_instances//(100*max_batch_size)
-task = "programming" # "translation"
+task = "conala" # "conala", "codealpaca", "evolinstruct"
 save_weights = False
+epochs = 10 if task=="conala" else 1
 
 FEW_SHOT_EXAMPLES = {
     "de-en": [
@@ -39,4 +40,6 @@ FEW_SHOT_EXAMPLES = {
     ]
 }
 
-PY_DATASET_HF_ID = "sahil2801/CodeAlpaca-20k"
+CODE_ALPACA_DATASET = "sahil2801/CodeAlpaca-20k"
+CONALA_DATASET = "neulab/conala"
+EVOL_INSTRUCT = "nickrosh/Evol-Instruct-Code-80k-v1"
