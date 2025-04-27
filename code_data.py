@@ -47,7 +47,14 @@ class CodeDataset:
         # Load the dataset
         dataset_path = self.task_to_dataset[self.task]
         print(f"Dataset path being loaded: {dataset_path}")
-        self.dataset = load_dataset(dataset_path, trust_remote_code=True)["train"]
+        # Alpaca and evolinstuct has no test set; needs to be created
+        if config.task == "alpaca" or config.task == "evolinstruct":
+            self.dataset = load_dataset(dataset_path, trust_remote_code=True)["train"]
+            split_dataset = self.dataset.train_test_split(train_size=train_ratio, seed=seed)
+            self.dataset = split_dataset[split]
+        else:
+            self.dataset = load_dataset(dataset_path, trust_remote_code=True)[split]
+
         # Specific to Evol Instruct
         if self.task == "evolinstruct":
             self.dataset = self._filter(self.dataset)
@@ -55,11 +62,7 @@ class CodeDataset:
 
         if num_samples is not None:
             self.dataset = self.dataset.select(range(num_samples))
-
-        # Train-test split
-        split_dataset = self.dataset.train_test_split(train_size=train_ratio, seed=seed)
-        self.dataset = split_dataset[split]
-
+        
 
     def __getitem__(self, idx):
         instance = self.dataset[idx]
