@@ -25,21 +25,21 @@ class CodeDataset:
 
         # Mapping task names to dataset names
         self.task_to_dataset = {
-            "alpaca": config.CODE_ALPACA_DATASET,
+            "codealpaca": config.CODE_ALPACA_DATASET,
             "conala": config.CONALA_DATASET,
             "evolinstruct": config.EVOLINSTRUCT_DATASET,
         }
 
         # Mapping task names to prompt preparation functions
         self.task_to_prompt = {
-            "alpaca": self.prepare_codealpaca_prompt,
+            "codealpaca": self.prepare_codealpaca_prompt,
             "conala": self.prepare_conala_prompt,
             "evolinstruct": self.prepare_evolinstruct_prompt,
         }
 
         # Mapping task names to field mappings
         self.task_to_fields = {
-            "alpaca": ("instruction", "input", "output"),
+            "codealpaca": ("instruction", "input", "output"),
             "conala": ("rewritten_intent", None, "snippet"),
             "evolinstruct": ("instruction", None, "code"),
         }
@@ -48,7 +48,7 @@ class CodeDataset:
         dataset_path = self.task_to_dataset[self.task]
         print(f"Dataset path being loaded: {dataset_path}")
         # Alpaca and evolinstuct has no test set; needs to be created
-        if config.task == "alpaca" or config.task == "evolinstruct":
+        if config.task == "codealpaca" or config.task == "evolinstruct":
             self.dataset = load_dataset(dataset_path, trust_remote_code=True)["train"]
             split_dataset = self.dataset.train_test_split(train_size=train_ratio, seed=seed)
             self.dataset = split_dataset[split]

@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import json
 
-
 @dataclass
 class ModelArgs:
     dim: int = 4096
@@ -23,11 +22,10 @@ class ModelArgs:
     ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
     rope_theta: float = 500000
-
+    use_scaled_rope: bool = True
     max_batch_size: int = 32
     max_seq_len: int = 2048
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):

@@ -35,7 +35,7 @@ val_ds = CodeDataset(config=config, tokenizer = tokenizer, split = "test", max_s
 
 logger.info(f"Training instances: {len(train_ds)}; Validation instances: {len(val_ds)}")
 
-collate_fn = Collator(pad_id= tokenizer.special_tokens["<|eot_id|>"])
+collate_fn = Collator(pad_id= tokenizer.special_tokens["<|eot_id|>"], max_seq_len = config.max_seq_len)
 train_dl = DataLoader(train_ds, batch_size = config.max_batch_size, shuffle = True, collate_fn = collate_fn,num_workers = 8)
 val_dl = DataLoader(val_ds, batch_size = config.max_batch_size, shuffle = False, collate_fn = collate_fn, num_workers = 8)
 
