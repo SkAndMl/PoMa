@@ -10,6 +10,7 @@ from collections import defaultdict
 import gc
 import os
 
+# LOADING LOGGER WITH TRAINING SPECIFICATIONS
 log_file_name = config.llama_path.split('/')[-1] + f"_k={config.k}_top_k={config.top_k}_task={config.task}"
 logger = create_logger(log_file_name=log_file_name)
 logger.info(f"Running model: {config.llama_path.split('/')[-1]}")
@@ -20,6 +21,7 @@ if device=="cuda":
     torch.cuda.empty_cache()
     gc.collect()
 
+# LOADING TOKENIZER AND POMA MODEL
 tokenizer = Tokenizer(f"{config.llama_path}/tokenizer.model")
 model = GPTk(ckpt_path=config.llama_path, 
             device=device,
@@ -35,28 +37,39 @@ val_ds = CodeDataset(config=config, tokenizer = tokenizer, split = "test", max_s
 
 logger.info(f"Training instances: {len(train_ds)}; Validation instances: {len(val_ds)}")
 
+# COLLATOR FOR PADDING AND DATALOADER LOADING
 collate_fn = Collator(pad_id= tokenizer.special_tokens["<|eot_id|>"], max_seq_len = config.max_seq_len)
 train_dl = DataLoader(train_ds, batch_size = config.max_batch_size, shuffle = True, collate_fn = collate_fn,num_workers = 8)
 val_dl = DataLoader(val_ds, batch_size = config.max_batch_size, shuffle = False, collate_fn = collate_fn, num_workers = 8)
 
-
+# SETTING OPTIMIZER AND LOSS FUNCTION
 optimizer = torch.optim.Adam(params=model.parameters(), lr=config.lr, weight_decay=config.wd)
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.special_tokens["<|eot_id|>"])
 
+# EVALUATION FUNCTION 
 @torch.inference_mode()
 def evaluate() -> Tuple[Dict[int, float]]:
+    """
+    Function to run evaluation with PoMa
+    """
+    # Setting model in validation mode
     model.eval()
+    # Tracking loss and accuracy
     accumulated_loss = defaultdict(float)
     accumulated_per_token_accuracy = defaultdict(float)
     # End position ignored for PoMa
     for batch, start_pos, _ in val_dl:
+        # Tensor to device
         batch, start_pos = batch.to(device), start_pos.to(device)
+        # Masking out context portion -- our target
         masked_batch = torch.where(
             torch.arange(batch.shape[1], device=device).view(1, -1) < start_pos,
             tokenizer.special_tokens["<|eot_id|>"],
             batch
         ).to(device)
+        # Forward Pass
         logits_dict: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
+        # Calculating loss for each head -- each predicts +1 offset
         for i, val in logits_dict.items():
             logits_i = val[:, :-i-1, :]
             tgt = masked_batch[:, i+1:]
@@ -65,10 +78,11 @@ def evaluate() -> Tuple[Dict[int, float]]:
             loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
             accumulated_loss[i] += loss.item()
 
+        # Calculating K token accuracy with logits and target
         per_token_accuracy = calculate_per_token_accuracy(logits_dict, masked_batch, tokenizer.special_tokens["<|eot_id|>"], top_k=config.top_k)
         for i in per_token_accuracy:
             accumulated_per_token_accuracy[i] += per_token_accuracy[i]
-    
+    # Model back to train
     model.train()
     accumulated_loss = {i: accumulated_loss[i]/len(val_dl) for i in accumulated_loss}
     accumulated_per_token_accuracy = {i: v/len(val_dl) for i,v in accumulated_per_token_accuracy.items()}
@@ -76,28 +90,32 @@ def evaluate() -> Tuple[Dict[int, float]]:
 
 def train():
     """
-    this is just a template
-    kindly modify the training loop based on the model api
+    Function to run train with PoMa
     """
+    # Ckpts dir created for saving weights
     if not os.path.exists("ckpts"):
         os.mkdir("ckpts")
     logger.info("Training started")
     logger.info(f"Total number of training steps: {len(train_dl)}")
     logger.info(f"Expect logs at every {config.eval_step} and {config.print_loss_every}")
+    # Tracking loss and best accuracy
     accumulated_loss = defaultdict(float)
     best_combined_accuracy = float("-inf")
     for _ in range(config.epochs):
         # End pos ignored for PoMa
         for step, (batch, start_pos, _) in enumerate(train_dl):
+            # Tensors to device
             batch, start_pos = batch.to(device), start_pos.to(device)
+            # Masking out context portion -- our target
             masked_batch = torch.where(
                 torch.arange(batch.shape[1], device=device).view(1, -1) < start_pos,
                 tokenizer.special_tokens["<|eot_id|>"],
                 batch
             ).to(device)
             logits: Dict[int, torch.Tensor] = model(batch, 0) # {pos: tensor<bs, seq_len, embed_dim>}
-            
+            # Setting gradients to zero before batch backprop
             optimizer.zero_grad()
+            # Calculating loss for each head -- each predicts +1 offset
             for i, val in logits.items():
                 logits_i = val[:, :-i-1, :]
                 tgt = masked_batch[:, i+1:]
@@ -105,25 +123,26 @@ def train():
                 assert (b, s) == tuple(tgt.shape)
                 loss: torch.Tensor = loss_fn(logits_i.reshape(-1, logits_i.size(-1)), tgt.reshape(-1))
                 accumulated_loss[i] += loss.item()
-                if i==0 and config.freeze_lm_head:
-                    continue
+                # Backprop
                 loss.backward()
-                
+            # Gradient Update
             optimizer.step()
+
+            # Printing Loss every few iterations
             if (step+1)%config.print_loss_every==0:
                 accumulated_loss = {i:accumulated_loss[i]/config.print_loss_every for i in accumulated_loss}
                 log_str = f"train step: {step+1:5d} | "
                 log_str += " | ".join(f"{k}: {v:.4f}" for k,v in accumulated_loss.items())
                 logger.info(log_str)
                 accumulated_loss = defaultdict(float)
-            
+            # Running Eval every few epochs
             if (step+1)%config.eval_step==0:
                 validation_accumulated_loss, validation_accumulated_per_token_accuracy = evaluate()
                 log_str = f"val step: {step+1:5d} | "
                 log_str += " | ".join(f"{k}: {v:.4f}" for k,v in validation_accumulated_loss.items())
                 log_str += " " + " | ".join(f"acc {k}: {v*100:.2f}" for k,v in validation_accumulated_per_token_accuracy.items())
                 logger.info(log_str)
-
+                # If new model accuracy > best accuracy, save model
                 if config.save_weights:
                     combined_accuracy = sum([v*100 for v in validation_accumulated_per_token_accuracy.values()])
                     if combined_accuracy > best_combined_accuracy:

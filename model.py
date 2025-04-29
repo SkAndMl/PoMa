@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import json
 
+# Updated with the Llama Model config file
 @dataclass
 class ModelArgs:
     dim: int = 4096
