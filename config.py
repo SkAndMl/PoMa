@@ -1,4 +1,4 @@
-llama_path = "/home/users/ntu/sathyakr/Llama3.2-1B"
+llama_path = "/home/users/ntu/ashwaths/workspace/lstm-llama/Llama3.2-1B"
  
 # TODO: all these params are randomly set. should be tuned
 max_seq_len = 384
@@ -6,13 +6,14 @@ max_batch_size = 8
 lr = 3e-4
 wd = 1e-2
 freeze_lm_head = False
-k = 3
+k = 4
 top_k = 5
 num_train_instances = 20000
 eval_step = num_train_instances//(10*max_batch_size)
 print_loss_every = num_train_instances//(100*max_batch_size)
-task = "programming" # "translation"
-save_weights = False
+task = "evolinstruct" # "conala", "codealpaca", "evolinstruct"
+save_weights = True
+epochs = 10 if task=="conala" else 1
 
 FEW_SHOT_EXAMPLES = {
     "de-en": [
@@ -39,4 +40,6 @@ FEW_SHOT_EXAMPLES = {
     ]
 }
 
-PY_DATASET_HF_ID = "sahil2801/CodeAlpaca-20k"
+CODE_ALPACA_DATASET = "sahil2801/CodeAlpaca-20k"
+CONALA_DATASET = "neulab/conala"
+EVOLINSTRUCT_DATASET = "nickrosh/Evol-Instruct-Code-80k-v1"

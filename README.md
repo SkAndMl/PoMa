@@ -1,30 +1,20 @@
 # gpt-k: Next-token prediction (NTP) to Multi-token prediction (MTP)
 
-The project undertaken by the authors aims to explore methods for speeding up LLM inference through prediction of multiple tokens in a single pass. Currently, 2 methods are being explored:
+The project undertaken by the authors aims to explore methods for speeding up LLM inference through prediction of multiple tokens in a single pass. 
 
+Llama Model code adapted from: https://github.com/meta-llama/llama3/blob/main/llama/model.py
 
-1.Matrix Based:
+## Script Running
 
-2. LSTM Based: K-steps forward pass is achieved through an LSTM model added on top of a Llama3 Large Language Model. Why: Traditional LLMs use Transformers as their backbone architecture, which need some form of positional embedding for linking a tokens in a sequence based on position. RNNs process the inputs sequentially and hence are Time-Aware, making them a natural fit for the MTP process. This Hypothesis is currently being tested. Branch: ashwath_edits
+1. Ensure all Python packages are installed as mentioned in requirements.txt. 
 
+2. Code requires the download of Llama3 Model weights; Download link for Llama Models:  https://www.llama.com/llama-downloads/
 
-## Translation Task Experimental Setup:
+3. After downloading the llama model change the the LLAMA_PATH in config.py to the folder location.
 
-Dataset : wmt14.
-Since translation tasks have some amount of determinism in terms of the outputs expected, it eases the process of evaluating MTP methods. wmt14 has multiple language translations, lending itself well to rigourous testing of models. 
+4. Dataset samples can be visualized in visualization.ipynb.
 
-Loss: Cross-Entropy Loss
-Cross Entropy Loss over the Vocabulary Size. 
+5. Training Parameters are adjusted in config.py. Training can be run with train.py
 
-Other Hyperparameters are to be optimized based on the needs of the experiment. 
-
-### Scripts
-
-1. data.py: Script for loading the dataset. Curated mainly for the Matrix Based model; LSTM version to be found in ashwath_edits branch.
-2. train.py: Script for training. Curated mainly for the Matrix Based model; LSTM version to be found in ashwath_edits branch.
-3. utils.py: Script for logger and Llama Model Loading
-4. tokenizer.py: Llama Tokenizer Script
-5. model.py: Llama Model Script
-
-Most model loading functions and tokenizer functions adapted from: https://github.com/meta-llama/llama3/blob/main/llama/model.py
-
+6. eval.py is used to run timed evaluation and compare with the base model. Please change poma_ckpt_path accordingly to run eval on
+trained models. 

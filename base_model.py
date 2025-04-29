@@ -3,15 +3,11 @@ adapted from https://github.com/meta-llama/llama3/blob/main/llama/model.py
 """
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple
 import torch
 import torch.nn.functional as F
 from torch import nn
-import os
-from pathlib import Path
-import json
 
-# Updated with the Llama Model config file
 @dataclass
 class ModelArgs:
     dim: int = 4096
@@ -27,6 +23,7 @@ class ModelArgs:
     max_batch_size: int = 32
     max_seq_len: int = 2048
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -217,7 +214,7 @@ class TransformerBlock(nn.Module):
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
-
+# The main model class
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -228,12 +225,14 @@ class Transformer(nn.Module):
         self.tok_embeddings = nn.Embedding(
             params.vocab_size, params.dim
         )
-
+        
+        # Layers made with transformer blocks
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
-
+        # Normalization with RMSNorm
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        # The LM Head -- Removed in my implementation
         self.output = nn.Linear(
             params.dim, params.vocab_size, bias=False
         )
@@ -244,6 +243,7 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
+    @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
@@ -268,111 +268,4 @@ class Transformer(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
         output = self.output(h).float()
-        return output
-
-class PosEmbeddingLayer(nn.Module):
-    def __init__(self, params: ModelArgs):
-        super(PosEmbeddingLayer, self).__init__()
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.embedding = nn.Embedding(params.max_seq_len, params.dim)
-    
-    def forward(self, x, seq_len):
-        pos_embeddings = self.embedding(torch.arange(seq_len, device=x.device))
-        return self.norm(x + pos_embeddings)
-
-class GPTk(nn.Module):
-    """
-    pos-embedding variant of gpt-k
-    """
-    def __init__(
-        self, 
-        ckpt_path: str, 
-        device: str, 
-        max_batch_size: int, 
-        max_seq_len: int, 
-        k: int,
-        freeze_lm_head: Optional[bool] = False
-    ) -> None:
-        super().__init__()
-        assert k>=2, "if not >=2 mtp makes no sense"
-        self.base_model = self._load_model(ckpt_path, device, max_batch_size, max_seq_len)
-        self.k = k
-        self.pos_embeddings = nn.ModuleList(PosEmbeddingLayer(self.params) for _ in range(k))
-        self.freeze_lm_head = freeze_lm_head
-        # freeze base_model params
-        # might need to unfreeze the lm_head in the future depending on how the experiments go :)
-        for name, param in self.base_model.named_parameters():
-            if name=="output.weight":
-                if freeze_lm_head:
-                    print(f"freezing lm_head")
-                    param.requires_grad = False
-                    continue
-                else:
-                    print(f"not freezing lm_head")
-            else:
-                param.requires_grad = False
-    
-    def _load_model(self, ckpt_path: str, device: str, max_batch_size: int, max_seq_len: int):
-        """
-        loads the weights into the model
-        """
-        assert device in {"cpu", "cuda"}
-        assert os.path.isdir(ckpt_path)
-        cp = list(Path(ckpt_path).glob("*.pth"))
-        assert len(cp)>0, f"{ckpt_path} has no .pth files!"
-        wt = torch.load(cp[0], map_location=device)
-
-        with open(Path(ckpt_path) / "params.json", "r") as f:
-            self.params = json.loads(f.read())
-            self.params['max_batch_size'] = max_batch_size
-            self.params['max_seq_len'] = max_seq_len
-            # remove extra params
-            self.params = {k:self.params[k] for k in ModelArgs.__match_args__}
-        
-        self.params = ModelArgs(**self.params)
-        model = Transformer(self.params)
-        model.load_state_dict(wt)
-        return model.to(device)
-    
-    def load_poma_weights(self, poma_ckpt_path: str, device: str = "cuda"):
-        """
-        Load PoMA checkpoint into pos_embeddings and (optionally) LM head.
-        """
-        assert os.path.isfile(poma_ckpt_path), f"{poma_ckpt_path} does not exist!"
-        state_dict = torch.load(poma_ckpt_path, map_location=device)
-        for i, pos_layer in enumerate(self.pos_embeddings):
-            pos_emb_key = f"pos_embeddings.{i}.embedding.weight"
-            pos_norm_key = f"pos_embeddings.{i}.norm.weight"
-            if pos_emb_key in state_dict:
-                pos_layer.embedding.weight.data.copy_(state_dict[pos_emb_key])
-            if pos_norm_key in state_dict:
-                pos_layer.norm.weight.data.copy_(state_dict[pos_norm_key])
-
-        if not self.freeze_lm_head and "lm_head.weight" in state_dict:
-            self.base_model.output.weight.data.copy_(state_dict["lm_head.weight"])
-
-        print(f"Loaded PoMA weights from {poma_ckpt_path}")
-
-    
-    def forward(self, tokens: torch.Tensor, start_pos: int) -> Dict[int, torch.Tensor]:
-        _bsz, seqlen = tokens.shape
-        h: torch.Tensor = self.base_model.tok_embeddings(tokens)
-        self.base_model.freqs_cis = self.base_model.freqs_cis.to(h.device)
-        freqs_cis = self.base_model.freqs_cis[start_pos : start_pos + seqlen]
-
-        mask = None
-        if seqlen > 1:
-            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-            mask = torch.triu(mask, diagonal=1)
-            mask = torch.hstack(
-                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-            ).type_as(h)
-
-        for layer in self.base_model.layers:
-            h = layer(h, start_pos, freqs_cis, mask)
-
-        position_logits = {}
-        for i, embedding_layer in enumerate(self.pos_embeddings):
-            modified_h = embedding_layer(h, seqlen) 
-            position_logits[i] = self.base_model.output(modified_h)
-        return position_logits
+        return h

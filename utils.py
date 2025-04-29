@@ -107,7 +107,7 @@ def get_acc_scores_from_log_file(log_file: str) -> dict:
     acc_pattern = r'acc \d: (\d+\.\d+)'
     with open(log_file, "r") as f:
         for line in f.readlines():
-            if "val" in line:
+            if "val step" in line:
                 scores = re.findall(acc_pattern, line.strip())
                 assert len(scores) == val_acc_k_scores["k"]
                 for i in range(len(scores)):
